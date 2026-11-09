@@ -8,6 +8,8 @@ use fast_http_core::{Path, Segments};
 use http::{HeaderMap, Method, Request as HttpRequest, StatusCode, header, request::Parts};
 use http_body_util::Full;
 
+use fast_http_core::{ErrorHandler, Flow, Next, ReqBody, reject};
+
 use super::*;
 use crate::{Route, get, post};
 
@@ -70,11 +72,7 @@ fn router() -> Router<impl RouteList> {
     ))
 }
 
-fn send<L: RouteList>(
-    router: &Router<L>,
-    method: Method,
-    uri: &str,
-) -> (StatusCode, String, Response) {
+fn send<R: Routes>(router: &R, method: Method, uri: &str) -> (StatusCode, String, Response) {
     let mut cx = Context::from_waker(Waker::noop());
     let request = HttpRequest::builder()
         .method(method)
@@ -222,4 +220,93 @@ async fn dispatch_future_with_borrowed_extractors_is_spawnable() {
         .expect("task completes");
 
     assert_eq!(response.status(), StatusCode::OK);
+}
+
+/// Rewrites every path to `/elsewhere` before the inner pipeline.
+struct Rewrite;
+
+impl Flow for Rewrite {
+    async fn handle<B: ReqBody, N: Next, H: ErrorHandler>(
+        &self,
+        mut req: HttpRequest<B>,
+        next: N,
+        _: &H,
+    ) -> Response {
+        *req.uri_mut() = http::Uri::from_static("/elsewhere");
+
+        next.run(req).await
+    }
+}
+
+/// Rejects every request with 404 through the scope's error handler.
+struct Deny;
+
+impl Flow for Deny {
+    async fn handle<B: ReqBody, N: Next, H: ErrorHandler>(
+        &self,
+        req: HttpRequest<B>,
+        next: N,
+        errors: &H,
+    ) -> Response {
+        drop(next);
+
+        reject(errors, req, Rejection::NotFound).await
+    }
+}
+
+/// Error handler that marks what it renders.
+struct Marking;
+
+impl ErrorHandler for Marking {
+    async fn handle(&self, error: HandlerError, parts: &Parts) -> Response {
+        let mut response = error.respond(parts);
+
+        response
+            .headers_mut()
+            .insert("x-handled", http::HeaderValue::from_static("yes"));
+
+        response
+    }
+}
+
+fn layered_routes() -> Router<impl RouteList> {
+    Router::new((
+        Route::new("/open", (get(health),)).expect("valid pattern"),
+        Route::new("/closed", (get(health),))
+            .expect("valid pattern")
+            .layer(Deny),
+        Route::new("/moved/{id}", (get(show),))
+            .expect("valid pattern")
+            .layer(Rewrite),
+    ))
+}
+
+#[test]
+fn route_layer_applies_only_to_its_route() {
+    let router = layered_routes();
+
+    let (open, ..) = send(&router, Method::GET, "/open");
+    let (closed, ..) = send(&router, Method::GET, "/closed");
+
+    assert_eq!(open, StatusCode::OK);
+    assert_eq!(closed, StatusCode::NOT_FOUND);
+}
+
+#[test]
+fn route_layer_rewrite_to_unmatched_path_returns_404() {
+    let router = layered_routes();
+
+    let (status, ..) = send(&router, Method::GET, "/moved/1");
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[test]
+fn router_layer_errors_use_central_error_handler() {
+    let router = layered_routes().with_error_handler(Marking).layer(Deny);
+
+    let (status, _, response) = send(&router, Method::GET, "/open");
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(response.headers()["x-handled"], "yes");
 }

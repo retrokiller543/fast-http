@@ -361,6 +361,19 @@ dependencies = [
 [[package]]
 name = "fast-http-layer"
 version = "0.0.0"
+dependencies = [
+ "bytes",
+ "fast-http-core",
+ "fast-http-router",
+ "http 1.5.0",
+ "http-body",
+ "http-body-util",
+ "thiserror",
+ "tokio",
+ "tower",
+ "tower-layer",
+ "tower-service",
+]
 
 [[package]]
 name = "fast-http-router"

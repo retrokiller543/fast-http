@@ -40,6 +40,8 @@ criterion = "0.8.2"
 allocation-counter = "0.8.1"
 axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio", "json"] }
 tower = { version = "0.5.3", features = ["util"] }
+tower-layer = "0.3.3"
+tower-service = "0.3.3"
 matchit = "0.9.2"
 actix-router = "0.5.5"
 

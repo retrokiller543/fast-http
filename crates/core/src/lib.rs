@@ -5,6 +5,7 @@ pub mod controller;
 pub mod endpoint;
 pub mod error;
 pub mod extract;
+pub mod flow;
 pub mod guard;
 pub mod media;
 pub mod rejection;
@@ -22,6 +23,7 @@ pub use extract::{
     Extension, FromParams, FromParts, FromPathParam, FromRequest, Path, PathArgs, PathParams,
     PeerAddr, Segments,
 };
+pub use flow::{Flow, Identity, Next, Stack, reject};
 pub use guard::{BodyGuard, GuardPhase, HeadGuard};
 pub use media::MediaType;
 pub use rejection::Rejection;

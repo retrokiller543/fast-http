@@ -7,5 +7,24 @@ authors.workspace = true
 repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
+description = "Flow combinators and tower adapters for fast-http."
+
+[features]
+default = []
+tower = ["dep:tower-layer", "dep:tower-service"]
 
 [dependencies]
+fast-http-core.workspace = true
+http.workspace = true
+http-body.workspace = true
+http-body-util.workspace = true
+bytes.workspace = true
+tower-layer = { workspace = true, optional = true }
+tower-service = { workspace = true, optional = true }
+
+[dev-dependencies]
+fast-http-router.workspace = true
+http-body-util.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }
+tower = { workspace = true }
