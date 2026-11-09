@@ -68,5 +68,9 @@ bench *args:
 example:
     cargo run -p fast-http-router --example users
 
+# Run the example server on 127.0.0.1:3000 (HTTP/1.1 and h2c); Ctrl-C to stop.
+serve:
+    cargo run -p fast-http-server --example hello
+
 clean:
     cargo clean

@@ -1,5 +1,6 @@
 [package]
 name = "fast-http-server"
+description = "Accept loop, protocol engines and graceful shutdown for fast-http"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,4 +9,28 @@ repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[features]
+default = []
+tls = ["fast-http-transport/tls"]
+
 [dependencies]
+fast-http-core.workspace = true
+fast-http-transport.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+hyper = { workspace = true, features = ["http1", "http2", "server"] }
+hyper-util = { workspace = true, features = ["server-auto", "tokio"] }
+thiserror.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+tracing.workspace = true
+
+[dev-dependencies]
+bytes.workspace = true
+fast-http-format = { workspace = true, features = ["json"] }
+fast-http-router.workspace = true
+fast-http-transport = { workspace = true, features = ["tls"] }
+hyper = { workspace = true, features = ["client", "http1", "http2"] }
+rustls.workspace = true
+serde.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "time"] }
+tokio-rustls.workspace = true

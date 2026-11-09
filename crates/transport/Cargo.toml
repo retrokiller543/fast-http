@@ -1,5 +1,6 @@
 [package]
 name = "fast-http-transport"
+description = "Byte transports for fast-http: TCP, in-memory and rustls TLS"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,4 +9,15 @@ repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[features]
+default = []
+tls = ["dep:rustls", "dep:tokio-rustls"]
+
 [dependencies]
+rustls = { workspace = true, optional = true }
+thiserror.workspace = true
+tokio = { workspace = true, features = ["io-util", "net", "sync"] }
+tokio-rustls = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync"] }
