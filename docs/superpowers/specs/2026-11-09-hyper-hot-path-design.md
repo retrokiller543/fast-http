@@ -36,8 +36,7 @@ Each fix is kept only if the stack/router benches or the load harness show a gai
 3. **`PeerAddr` without allocations.** Inserting into `Extensions` allocates its map (two allocations). Carry the peer address in a connection-level value the extractor reads instead, keeping the `PeerAddr` extractor API.
 4. **Dispatch future size.** The API dispatch future is about 1.9 KB and `memmove` took about 15% of a static dispatch. Without boxing, split large `async` blocks, keep extractor state out of the outer future, and guard sizes with a test asserting an upper bound.
 5. **Segment-trie route table.** Replace the linear pattern scan with a segment trie keeping the current matching rules, so lookup reaches matchit's speed.
-6. **`Segments` without `Vec<String>`.** Borrow segments from the path (zero allocations for the rest parameter).
-7. **405 method set.** `Allow` becomes a fixed method bitset with an extension list, removing the 8 allocations of the 405 path.
+6. **405 method set.** `Allow` becomes a fixed method bitset with an extension list, removing the 8 allocations of the 405 path.
 
 ## 4. hyper tuning
 
@@ -48,6 +47,10 @@ Each option is measured with the harness, not assumed:
 - `http1().auto_date_header(true)` stays on (hyper caches the date per second).
 - `serve_connection` instead of `serve_connection_with_upgrades` while no route uses upgrades, if the upgrade path costs measurable time.
 - An `http1_only` setting that skips the auto builder's HTTP/2 preface detection, for deployments behind a proxy that speaks HTTP/1.1 upstream.
+
+## Findings
+
+- `Segments` already borrows from the path (done before this spec), so it is not part of the fixes.
 
 ## Testing
 
