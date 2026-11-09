@@ -1,6 +1,6 @@
 //! The same route table expressed for fast-http, matchit and actix-router, plus the paths to look up.
 
-use fast_http_router::{ParamBuf, Route, RouteList, Router, get};
+use fast_http_router::{ParamBuf, Route, RouteList, Router};
 
 /// One route in each router's syntax.
 #[derive(Debug, Clone, Copy)]
@@ -84,22 +84,25 @@ async fn noop() -> &'static str {
 
 /// fast-http router over [`ROUTES`] with no-op handlers.
 pub fn fast_http() -> Router<impl RouteList> {
-    let at = |index: usize| Route::new(ROUTES[index].fast_http, (get(noop),)).expect("valid route");
+    let at = |index: usize| {
+        Route::new(ROUTES[index].fast_http)
+            .expect("valid route")
+            .get(noop)
+    };
 
-    Router::new((
-        at(0),
-        at(1),
-        at(2),
-        at(3),
-        at(4),
-        at(5),
-        at(6),
-        at(7),
-        at(8),
-        at(9),
-        at(10),
-        at(11),
-    ))
+    Router::new()
+        .route(at(0))
+        .route(at(1))
+        .route(at(2))
+        .route(at(3))
+        .route(at(4))
+        .route(at(5))
+        .route(at(6))
+        .route(at(7))
+        .route(at(8))
+        .route(at(9))
+        .route(at(10))
+        .route(at(11))
 }
 
 /// fast-http lookup: route position plus captured parameter count.

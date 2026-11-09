@@ -15,7 +15,7 @@ use std::net::SocketAddr;
 
 use fast_http_core::{ErrorResponse, IntoResponse, Path, PeerAddr, Response, ResponseBody};
 use fast_http_format::{Body, Negotiated};
-use fast_http_router::{Route, Router, get, post};
+use fast_http_router::{Route, Router};
 use fast_http_server::Server;
 use fast_http_transport::Tcp;
 use http::StatusCode;
@@ -82,11 +82,10 @@ async fn peer(PeerAddr(addr): PeerAddr) -> String {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let routes = Router::new((
-        Route::new("/users/{id}", (get(show),))?,
-        Route::new("/users", (post(create),))?,
-        Route::new("/peer", (get(peer),))?,
-    ));
+    let routes = Router::new()
+        .route(Route::new("/users/{id}")?.get(show))
+        .route(Route::new("/users")?.post(create))
+        .route(Route::new("/peer")?.get(peer));
     let server = Server::bind(&Tcp::new(), SocketAddr::from(([127, 0, 0, 1], 3000))).await?;
 
     println!("listening on http://{}", server.local_addr()?);

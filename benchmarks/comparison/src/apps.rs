@@ -1,4 +1,5 @@
-//! The same small JSON API on fast-http and on axum, with matching handlers and error rendering.
+//! The same small JSON API on fast-http, axum and actix-web, with matching handlers and error
+//! rendering.
 
 use fast_http_core::{ErrorResponse, IntoResponse, Path, ResponseBody, Routes, Segments};
 use fast_http_format::{Body, Negotiated};
@@ -51,6 +52,14 @@ impl ErrorResponse for ApiError {
 impl axum::response::IntoResponse for ApiError {
     fn into_response(self) -> axum::response::Response {
         axum::response::IntoResponse::into_response((StatusCode::NOT_FOUND, self.to_string()))
+    }
+}
+
+impl actix_web::ResponseError for ApiError {
+    fn status_code(&self) -> actix_web::http::StatusCode {
+        match self {
+            Self::NotFound(_) => actix_web::http::StatusCode::NOT_FOUND,
+        }
     }
 }
 
@@ -136,17 +145,70 @@ mod ax {
     }
 }
 
+/// actix-web handlers.
+mod ac {
+    use actix_web::{
+        HttpResponse,
+        web::{Json, Path},
+    };
+
+    use super::*;
+
+    pub async fn health() -> &'static str {
+        "ok"
+    }
+
+    pub async fn show(id: Path<u64>) -> Result<Json<User>, ApiError> {
+        find(id.into_inner()).map(Json)
+    }
+
+    pub async fn create(Json(new): Json<NewUser>) -> HttpResponse {
+        HttpResponse::Created().json(insert(new))
+    }
+
+    pub async fn repo(path: Path<(String, String)>) -> &'static str {
+        drop(path.into_inner());
+
+        "repo"
+    }
+
+    pub async fn files(rest: Path<String>) -> &'static str {
+        drop(rest.into_inner());
+
+        "files"
+    }
+}
+
 /// The API on fast-http.
 pub fn fast_http() -> impl Routes {
-    use fast_http_router::{Route, Router, get, post};
+    use fast_http_router::{Route, Router};
 
-    Router::new((
-        Route::new("/health", (get(fast::health),)).expect("valid route"),
-        Route::new("/users/{id}", (get(fast::show),)).expect("valid route"),
-        Route::new("/users", (post(fast::create),)).expect("valid route"),
-        Route::new("/orgs/{org}/repos/{repo}", (get(fast::repo),)).expect("valid route"),
-        Route::new("/files/{**path}", (get(fast::files),)).expect("valid route"),
-    ))
+    Router::new()
+        .route(
+            Route::new("/health")
+                .expect("valid route")
+                .get(fast::health),
+        )
+        .route(
+            Route::new("/users/{id}")
+                .expect("valid route")
+                .get(fast::show),
+        )
+        .route(
+            Route::new("/users")
+                .expect("valid route")
+                .post(fast::create),
+        )
+        .route(
+            Route::new("/orgs/{org}/repos/{repo}")
+                .expect("valid route")
+                .get(fast::repo),
+        )
+        .route(
+            Route::new("/files/{**path}")
+                .expect("valid route")
+                .get(fast::files),
+        )
 }
 
 /// The API on axum.
@@ -159,4 +221,16 @@ pub fn axum() -> axum::Router {
         .route("/users", post(ax::create))
         .route("/orgs/{org}/repos/{repo}", get(ax::repo))
         .route("/files/{*path}", get(ax::files))
+}
+
+/// The API on actix-web, for `App::new().configure(apps::actix)`.
+pub fn actix(config: &mut actix_web::web::ServiceConfig) {
+    use actix_web::web::{get, post};
+
+    config
+        .route("/health", get().to(ac::health))
+        .route("/users/{id}", get().to(ac::show))
+        .route("/users", post().to(ac::create))
+        .route("/orgs/{org}/repos/{repo}", get().to(ac::repo))
+        .route("/files/{path:.*}", get().to(ac::files));
 }

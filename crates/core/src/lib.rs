@@ -11,6 +11,7 @@ pub mod media;
 pub mod rejection;
 pub mod response;
 pub mod routes;
+pub mod tuple;
 pub mod types;
 
 pub use body::{BoxError, ResponseBody, buffer};
@@ -29,4 +30,5 @@ pub use media::MediaType;
 pub use rejection::Rejection;
 pub use response::IntoResponse;
 pub use routes::Routes;
+pub use tuple::TuplePush;
 pub use types::{ReqBody, Request, Response};

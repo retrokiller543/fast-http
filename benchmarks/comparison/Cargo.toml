@@ -5,11 +5,10 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-keywords.workspace = true
-categories.workspace = true
-publish = false
+publish.workspace = true
 
 [dependencies]
+actix-web.workspace = true
 actix-router.workspace = true
 axum.workspace = true
 bytes.workspace = true

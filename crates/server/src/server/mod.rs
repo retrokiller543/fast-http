@@ -8,16 +8,18 @@ use tokio::{
 };
 use tracing::{debug, error, warn};
 
-use crate::{Engine, Hyper, ServerConfig, Settings, Shutdown, TRACE_TARGET};
+use crate::{Engine, Hyper, Plain, ServerConfig, Settings, Shutdown, TRACE_TARGET, TaskWrap};
 
 /// Pause after an accept error that is not about a single connection, such as running out of
 /// file descriptors, so the loop does not spin.
 const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
 
-/// Accept loop that runs every connection on its own task through engine `E`.
-pub struct Server<L, E = Hyper> {
+/// Accept loop that runs every connection on its own task through engine `E`, with every
+/// spawned task wrapped by `W`.
+pub struct Server<L, E = Hyper, W = Plain> {
     listener: L,
     settings: Settings,
+    tasks: W,
     engine: PhantomData<fn() -> E>,
 }
 
@@ -35,12 +37,13 @@ impl<L: Listener> Server<L> {
         Self {
             listener,
             settings: Settings::default(),
+            tasks: Plain,
             engine: PhantomData,
         }
     }
 }
 
-impl<L: Listener, E: Engine> Server<L, E> {
+impl<L: Listener, E: Engine, W: TaskWrap> Server<L, E, W> {
     /// Replaces the settings with the preset `C`.
     pub fn config<C: ServerConfig>(mut self) -> Self {
         self.settings = Settings::of::<C>();
@@ -54,10 +57,22 @@ impl<L: Listener, E: Engine> Server<L, E> {
     }
 
     /// Swaps the protocol engine.
-    pub fn engine<F: Engine>(self) -> Server<L, F> {
+    pub fn engine<F: Engine>(self) -> Server<L, F, W> {
         Server {
             listener: self.listener,
             settings: self.settings,
+            tasks: self.tasks,
+            engine: PhantomData,
+        }
+    }
+
+    /// Wraps every task the server spawns, connection and HTTP/2 stream tasks alike, with
+    /// `tasks`, so the embedding framework's context reaches handlers.
+    pub fn task_wrap<V: TaskWrap>(self, tasks: V) -> Server<L, E, V> {
+        Server {
+            listener: self.listener,
+            settings: self.settings,
+            tasks,
             engine: PhantomData,
         }
     }
@@ -73,9 +88,10 @@ impl<L: Listener, E: Engine> Server<L, E> {
         let Self {
             mut listener,
             settings,
+            tasks,
             ..
         } = self;
-        let engine = Arc::new(E::new(&settings));
+        let engine = Arc::new(E::new(&settings, tasks.clone()));
         let routes = Arc::new(routes);
         let (trigger, signal) = Shutdown::channel();
         let mut connections = JoinSet::new();
@@ -95,13 +111,13 @@ impl<L: Listener, E: Engine> Server<L, E> {
                 Event::Shutdown => break,
                 Event::Closed(joined) => report(joined),
                 Event::Accepted(Ok(accepted)) => {
-                    connections.spawn(connection(
+                    connections.spawn(tasks.wrap(connection::<_, E, _, _>(
                         accepted,
                         Arc::clone(&engine),
                         Arc::clone(&routes),
                         signal.clone(),
                         settings.handshake_timeout,
-                    ));
+                    )));
                 }
                 Event::Accepted(Err(error)) if is_connection_error(&error) => {
                     debug!(target: TRACE_TARGET, %error, "connection failed before accept");
@@ -130,9 +146,9 @@ enum Event<A> {
     Accepted(io::Result<A>),
 }
 
-async fn connection<A: Accepted, E: Engine, R: Routes>(
+async fn connection<A: Accepted, E: Engine, W: TaskWrap, R: Routes>(
     accepted: A,
-    engine: Arc<E>,
+    engine: Arc<E::State<W>>,
     routes: Arc<R>,
     shutdown: Shutdown,
     handshake_timeout: Duration,
@@ -152,7 +168,7 @@ async fn connection<A: Accepted, E: Engine, R: Routes>(
     };
     let info = conn.info();
 
-    if let Err(error) = engine.serve(conn, info, routes, shutdown).await {
+    if let Err(error) = E::serve(&*engine, conn, info, routes, shutdown).await {
         debug!(target: TRACE_TARGET, peer = ?info.peer, %error, "connection closed with an error");
     }
 }

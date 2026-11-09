@@ -7,7 +7,7 @@ use http::{Method, Request, StatusCode, header};
 use http_body_util::{BodyExt, Full};
 use serde::{Deserialize, Serialize};
 
-use fast_http_router::{Route, Router, get, post};
+use fast_http_router::{Route, Router};
 
 /// A user as stored and as returned.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,10 +91,9 @@ async fn send(router: &impl Routes, method: Method, uri: &str, content: Option<&
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-    let router = Router::new((
-        Route::new("/users/{id}", (get(show),)).expect("valid pattern"),
-        Route::new("/users", (post(create),)).expect("valid pattern"),
-    ));
+    let router = Router::new()
+        .route(Route::new("/users/{id}").expect("valid pattern").get(show))
+        .route(Route::new("/users").expect("valid pattern").post(create));
 
     send(&router, Method::GET, "/users/7", None).await;
     send(&router, Method::GET, "/users/0", None).await;

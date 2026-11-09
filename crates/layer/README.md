@@ -7,12 +7,11 @@ Middleware for fast-http. A middleware is a `Flow` (defined in `fast-http-core`)
 ## Usage
 
 ```rust
-let router = Router::new((
-    Route::new("/admin/{id}", (get(show),))?.layer(RequireAdmin),
-    Route::new("/health", (get(health),))?,
-))
-.layer(map_request(|parts| { parts.headers.remove("x-internal"); }))
-.layer(TowerFlow::new(tower_http::trace::TraceLayer::new_for_http()));
+let router = Router::new()
+    .route(Route::new("/admin/{id}")?.get(show).layer(RequireAdmin))
+    .route(Route::new("/health")?.get(health))
+    .layer(map_request(|parts| { parts.headers.remove("x-internal"); }))
+    .layer(TowerFlow::new(tower_http::trace::TraceLayer::new_for_http()));
 ```
 
 - `Router::layer` runs before matching. `Route::layer` runs after matching, and the route matches the request again, so a flow that rewrites the path to something the route no longer matches gets a 404.

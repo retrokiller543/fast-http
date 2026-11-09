@@ -7,5 +7,5 @@ pub mod router;
 
 pub use handler::{Extract, FnEndpoint, Handler, delete, get, patch, post, put};
 pub use pattern::{MAX_PARAMS, ParamBuf, Pattern, PatternError, Segment};
-pub use route::{Route, RouteList};
+pub use route::{Append, Level, Route, RouteList};
 pub use router::Router;

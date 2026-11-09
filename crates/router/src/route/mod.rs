@@ -1,10 +1,13 @@
 use fast_http_core::{
-    DispatchOptions, EndpointSet, ErrorHandler, Flow, HandlerError, Identity, Next, PathParams,
-    Rejection, ReqBody, Request, Response, Stack, flow,
+    DispatchOptions, Endpoint, EndpointSet, ErrorHandler, Flow, HandlerError, Identity, Next,
+    PathParams, Rejection, ReqBody, Request, Response, Stack, TuplePush,
 };
-use http::request::Parts;
 
-use crate::{ParamBuf, Pattern, PatternError};
+use crate::{FnEndpoint, Handler, ParamBuf, Pattern, PatternError, handler};
+
+pub use self::list::{Append, Level, RouteList};
+
+mod list;
 
 /// A route pattern together with the endpoints that answer it and the flow wrapped around them.
 #[derive(Debug)]
@@ -14,18 +17,46 @@ pub struct Route<S, F = Identity> {
     flow: F,
 }
 
-impl<S: EndpointSet> Route<S> {
-    /// Parses `pattern` and pairs it with `set`, a tuple of endpoints tried in order.
-    pub fn new(pattern: &'static str, set: S) -> Result<Self, PatternError> {
+impl Route<()> {
+    /// Parses `pattern`; add endpoints with [`Route::endpoint`] or the method shorthands.
+    pub fn new(pattern: &'static str) -> Result<Self, PatternError> {
         Ok(Self {
             pattern: Pattern::parse(pattern)?,
-            set,
+            set: (),
             flow: Identity,
         })
     }
 }
 
+macro_rules! method_shorthand {
+    ($($name:ident),+) => {
+        $(
+            #[doc = concat!("Appends a `", stringify!($name), "` endpoint calling `handler`.")]
+            pub fn $name<H: Handler<M>, M: 'static>(self, handler: H) -> Route<S::Output, F>
+            where
+                S: TuplePush<FnEndpoint<H, M>>,
+            {
+                self.endpoint(handler::$name(handler))
+            }
+        )+
+    };
+}
+
 impl<S, F> Route<S, F> {
+    /// Appends `endpoint`; endpoints of a route are tried in the order they are added.
+    pub fn endpoint<E: Endpoint>(self, endpoint: E) -> Route<S::Output, F>
+    where
+        S: TuplePush<E>,
+    {
+        Route {
+            pattern: self.pattern,
+            set: self.set.push(endpoint),
+            flow: self.flow,
+        }
+    }
+
+    method_shorthand!(get, post, put, patch, delete);
+
     /// Wraps `flow` around this route; it runs after matching, and the last one added runs first.
     ///
     /// The route re-matches its pattern after the flows, so a flow that rewrites the path to one
@@ -80,118 +111,3 @@ impl<S: EndpointSet, H: ErrorHandler> Next for RouteNext<'_, S, H> {
             .await
     }
 }
-
-/// The routes of a router, statically typed. Implemented for tuples of [`Route`]s.
-pub trait RouteList: Send + Sync + 'static {
-    /// Number of routes.
-    const LEN: usize;
-
-    /// Pattern of the route at `index`.
-    fn pattern(&self, index: usize) -> &Pattern;
-
-    /// Whether the route at `index` has no flows, so [`RouteList::call`] applies.
-    fn passthrough(&self, index: usize) -> bool;
-
-    /// Dispatches to the route at `index`, which must be [`passthrough`](RouteList::passthrough).
-    fn call<B: ReqBody, H: ErrorHandler>(
-        &self,
-        index: usize,
-        parts: &Parts,
-        params: PathParams<'_>,
-        body: B,
-        handler: &H,
-        options: DispatchOptions,
-    ) -> impl Future<Output = Response> + Send;
-
-    /// Runs the flows of the route at `index` around its endpoints.
-    fn call_layered<B: ReqBody, H: ErrorHandler>(
-        &self,
-        index: usize,
-        req: Request<B>,
-        handler: &H,
-        options: DispatchOptions,
-    ) -> impl Future<Output = Response> + Send;
-}
-
-macro_rules! route_list {
-    ($len:expr; $($set:ident $flow:ident : $index:tt),+) => {
-        impl<$($set: EndpointSet, $flow: Flow),+> RouteList for ($(Route<$set, $flow>,)+) {
-            const LEN: usize = $len;
-
-            fn pattern(&self, index: usize) -> &Pattern {
-                match index {
-                    $($index => &self.$index.pattern,)+
-                    _ => unreachable!("index comes from the router's own table"),
-                }
-            }
-
-            fn passthrough(&self, index: usize) -> bool {
-                match index {
-                    $($index => $flow::PASSTHROUGH,)+
-                    _ => unreachable!("index comes from the router's own table"),
-                }
-            }
-
-            async fn call_layered<Bd: ReqBody, Eh: ErrorHandler>(
-                &self,
-                index: usize,
-                req: Request<Bd>,
-                handler: &Eh,
-                options: DispatchOptions,
-            ) -> Response {
-                match index {
-                    $($index => {
-                        let route = &self.$index;
-                        let next = RouteNext {
-                            pattern: &route.pattern,
-                            set: &route.set,
-                            handler,
-                            options,
-                        };
-
-                        flow::run(&route.flow, req, next, handler).await
-                    })+
-                    _ => unreachable!("index comes from the router's own table"),
-                }
-            }
-
-            async fn call<Bd: ReqBody, Eh: ErrorHandler>(
-                &self,
-                index: usize,
-                parts: &Parts,
-                params: PathParams<'_>,
-                body: Bd,
-                handler: &Eh,
-                options: DispatchOptions,
-            ) -> Response {
-                match index {
-                    $($index => {
-                        fast_http_core::dispatch_set(
-                            &self.$index.set,
-                            parts,
-                            params,
-                            body,
-                            handler,
-                            options,
-                        )
-                        .await
-                    })+
-                    _ => unreachable!("index comes from the router's own table"),
-                }
-            }
-        }
-    };
-}
-
-route_list!(1; SA FA: 0);
-route_list!(2; SA FA: 0, SB FB: 1);
-route_list!(3; SA FA: 0, SB FB: 1, SC FC: 2);
-route_list!(4; SA FA: 0, SB FB: 1, SC FC: 2, SD FD: 3);
-route_list!(5; SA FA: 0, SB FB: 1, SC FC: 2, SD FD: 3, SE FE: 4);
-route_list!(6; SA FA: 0, SB FB: 1, SC FC: 2, SD FD: 3, SE FE: 4, SF FF: 5);
-route_list!(7; SA FA: 0, SB FB: 1, SC FC: 2, SD FD: 3, SE FE: 4, SF FF: 5, SG FG: 6);
-route_list!(8; SA FA: 0, SB FB: 1, SC FC: 2, SD FD: 3, SE FE: 4, SF FF: 5, SG FG: 6, SH FH: 7);
-route_list!(9; SA FA: 0, SB FB: 1, SC FC: 2, SD FD: 3, SE FE: 4, SF FF: 5, SG FG: 6, SH FH: 7, SI FI: 8);
-route_list!(10; SA FA: 0, SB FB: 1, SC FC: 2, SD FD: 3, SE FE: 4, SF FF: 5, SG FG: 6, SH FH: 7, SI FI: 8, SJ FJ: 9);
-route_list!(11; SA FA: 0, SB FB: 1, SC FC: 2, SD FD: 3, SE FE: 4, SF FF: 5, SG FG: 6, SH FH: 7, SI FI: 8, SJ FJ: 9, SK FK: 10);
-route_list!(12; SA FA: 0, SB FB: 1, SC FC: 2, SD FD: 3, SE FE: 4, SF FF: 5, SG FG: 6, SH FH: 7, SI FI: 8, SJ FJ: 9, SK FK: 10, SL FL: 11);

@@ -1,0 +1,21 @@
+[package]
+name = "fast-http-load"
+description = "Network load comparison of fast-http, axum and actix-web, driven by oha"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+actix-web.workspace = true
+axum.workspace = true
+fast-http-bench.workspace = true
+fast-http-server.workspace = true
+fast-http-transport.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sysinfo.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["net", "rt-multi-thread"] }

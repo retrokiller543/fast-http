@@ -260,6 +260,18 @@ pub trait Routes: Send + Sync + 'static {
 }
 ```
 
+**Builder (implemented):**
+
+```rust
+Router::new()
+    .route(Route::new("/users/{id}")?.get(show).put(update))
+    .merge(orgs())
+```
+
+- Each call appends statically through `TuplePush`: a route's endpoints form a tuple of up to 16.
+- A router's route list grows like a base-16 counter (`Level<Digit, Up>`). Full 16-tuples carry upward, so `n` routes nest only log16(n) levels deep. That keeps future nesting far below rustc's layout-depth limit; a flat chain hit it at about 500 routes.
+- A single `.route` chain still costs quadratic compile time and debug stack, because each step is a bigger type. Large apps should build per-controller groups and `merge` them, which is also the shape generated registration takes.
+
 ## 7. Layer graph
 
 ### 7.1 Why not just a stack
@@ -314,7 +326,9 @@ Layers return `Response`; fallible internals use typed errors (`thiserror`) conv
   1. `&self` / component fields: injected at assembly, zero per-request cost.
   2. `FromParts` / `FromRequest`: per-request extraction.
   3. Guard outputs: typed values produced by the matched guard.
-- Layers are components too and can receive DI at construction.
+- Layers are components too and can receive DI at construction. A `Flow` is a plain struct: Upwell builds it in its container with its dependencies as fields (`&self`), then registers it with `.layer(flow)`. Through those fields it can put request data, such as the user or session, into extensions. fast-http needs no extra API for this.
+- Context propagation: `Server::task_wrap(w)` takes a `TaskWrap` (static generic, `Plain` by default) that wraps every task the server spawns, both connection tasks and the engine's HTTP/2 stream tasks. Upwell implements it with `CapturedContext::bind`, so handlers and flows see the context that was current where the server was started.
+- **Deferred: request-scoped injection into handler arguments.** fast-http stays a plain HTTP framework with no DI of its own. Extractors other than the body are synchronous (`FromParts`/`FromParams`), and adding async, container-backed extractors would put a second, axum-style DI system next to Upwell's. For now, request-scoped values reach handlers through Upwell's `Current<T>`/`Scoped<S, T>` (the scope entered by a flow) or through extensions populated by a flow. The decision can be revisited if a design keeps fast-http simple.
 - No `Resolver` trait changes are required for this design.
 
 ## 9. Router codegen

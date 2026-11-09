@@ -14,7 +14,7 @@ pub enum Selection {
     Rejected(Rejection),
 }
 
-/// The endpoints sharing one path, tried in order. Implemented for tuples of endpoints.
+/// The endpoints sharing one path, tried in order. Implemented for `()` and tuples of up to 16 endpoints.
 pub trait EndpointSet: Send + Sync + 'static {
     /// Chooses an endpoint from the head, and from the body once it is available.
     fn select(&self, parts: &Parts, body: Option<&Bytes>) -> Selection;
@@ -90,6 +90,23 @@ fn rejection(method_seen: bool, methods: &[&Method], miss: http::StatusCode) -> 
     })
 }
 
+impl EndpointSet for () {
+    fn select(&self, _: &Parts, _: Option<&Bytes>) -> Selection {
+        Selection::Rejected(Rejection::MethodNotAllowed { allow: Vec::new() })
+    }
+
+    async fn call<B: ReqBody, H: ErrorHandler>(
+        &self,
+        _: usize,
+        _: &Parts,
+        _: PathParams<'_>,
+        _: B,
+        _: &H,
+    ) -> Response {
+        unreachable!("an empty set never selects an endpoint")
+    }
+}
+
 macro_rules! endpoint_set {
     ($($endpoint:ident : $index:tt),+) => {
         impl<$($endpoint: Endpoint),+> EndpointSet for ($($endpoint,)+) {
@@ -134,3 +151,11 @@ endpoint_set!(A: 0, B: 1, C: 2, D: 3, E: 4);
 endpoint_set!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5);
 endpoint_set!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6);
 endpoint_set!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7);
+endpoint_set!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7, I: 8);
+endpoint_set!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7, I: 8, J: 9);
+endpoint_set!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7, I: 8, J: 9, K: 10);
+endpoint_set!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7, I: 8, J: 9, K: 10, L: 11);
+endpoint_set!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7, I: 8, J: 9, K: 10, L: 11, M: 12);
+endpoint_set!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7, I: 8, J: 9, K: 10, L: 11, M: 12, N: 13);
+endpoint_set!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7, I: 8, J: 9, K: 10, L: 11, M: 12, N: 13, O: 14);
+endpoint_set!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7, I: 8, J: 9, K: 10, L: 11, M: 12, N: 13, O: 14, P: 15);

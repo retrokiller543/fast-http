@@ -4,7 +4,7 @@ use bytes::Bytes;
 use criterion::{Criterion, criterion_group, criterion_main};
 use fast_http_bench_support::{Budget, bench, ready};
 use fast_http_core::{Path, Routes, Segments};
-use fast_http_router::{ParamBuf, Pattern, Route, Router, get, post};
+use fast_http_router::{ParamBuf, Pattern, Route, Router};
 use http::{Method, Request};
 use http_body_util::Full;
 
@@ -86,16 +86,23 @@ fn patterns(c: &mut Criterion) {
 }
 
 fn dispatch(c: &mut Criterion) {
-    let router = Router::new((
-        Route::new("/health", (get(health),)).expect("valid pattern"),
-        Route::new("/users/{id}", (get(user),)).expect("valid pattern"),
-        Route::new("/users", (post(create),)).expect("valid pattern"),
-        Route::new("/orgs/{org}/repos/{repo}", (get(pair),)).expect("valid pattern"),
-        Route::new("/orders", (get(health),)).expect("valid pattern"),
-        Route::new("/items", (get(health),)).expect("valid pattern"),
-        Route::new("/teams", (get(health),)).expect("valid pattern"),
-        Route::new("/files/{**path}", (get(files),)).expect("valid pattern"),
-    ));
+    let router = Router::new()
+        .route(Route::new("/health").expect("valid pattern").get(health))
+        .route(Route::new("/users/{id}").expect("valid pattern").get(user))
+        .route(Route::new("/users").expect("valid pattern").post(create))
+        .route(
+            Route::new("/orgs/{org}/repos/{repo}")
+                .expect("valid pattern")
+                .get(pair),
+        )
+        .route(Route::new("/orders").expect("valid pattern").get(health))
+        .route(Route::new("/items").expect("valid pattern").get(health))
+        .route(Route::new("/teams").expect("valid pattern").get(health))
+        .route(
+            Route::new("/files/{**path}")
+                .expect("valid pattern")
+                .get(files),
+        );
 
     bench(
         c,

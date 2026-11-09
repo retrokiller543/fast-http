@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use bytes::Bytes;
 use fast_http_core::{FromRequest, PeerAddr, Rejection, ReqBody, Routes, buffer};
-use fast_http_router::{Route, Router, get, post};
+use fast_http_router::{Route, Router};
 use fast_http_transport::{Alpn, Listener, Memory, MemoryConnector};
 use http::{Method, Request, request::Parts};
 use http_body_util::{BodyExt, Full};
@@ -23,7 +23,7 @@ use tokio::{
 };
 use tokio_rustls::{TlsConnector, client::TlsStream};
 
-use crate::{Server, Settings};
+use crate::{Hyper, Server, Settings, TaskWrap};
 
 pub const CA: &[u8] = include_bytes!("../../../fixtures/tls/ca.pem");
 pub const CERT: &[u8] = include_bytes!("../../../fixtures/tls/cert.pem");
@@ -31,6 +31,25 @@ pub const KEY: &[u8] = include_bytes!("../../../fixtures/tls/key.pem");
 
 /// Notified by handlers that block, once their request is in flight.
 pub static STARTED: Notify = Notify::const_new();
+
+tokio::task_local! {
+    /// Context a [`Tagged`] wrapper scopes around every spawned task.
+    pub static TAG: &'static str;
+}
+
+/// Task wrapper that scopes [`TAG`] around each task, like a framework re-entering its context.
+#[derive(Clone)]
+pub struct Tagged(pub &'static str);
+
+impl TaskWrap for Tagged {
+    fn wrap<F>(&self, task: F) -> impl Future<Output = F::Output> + Send + 'static
+    where
+        F: Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
+        TAG.scope(self.0, task)
+    }
+}
 
 /// Body buffered without an extractor limit, so only the server limit applies.
 pub struct Raw(pub Bytes);
@@ -58,6 +77,10 @@ async fn echo(Raw(body): Raw) -> Bytes {
     body
 }
 
+async fn tag() -> &'static str {
+    TAG.try_with(|tag| *tag).unwrap_or("none")
+}
+
 async fn slow() -> &'static str {
     STARTED.notify_one();
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -72,13 +95,13 @@ async fn stuck() -> &'static str {
 }
 
 pub fn routes() -> impl Routes {
-    Router::new((
-        Route::new("/hello", (get(hello),)).expect("pattern"),
-        Route::new("/peer", (get(peer),)).expect("pattern"),
-        Route::new("/echo", (post(echo),)).expect("pattern"),
-        Route::new("/slow", (get(slow),)).expect("pattern"),
-        Route::new("/stuck", (get(stuck),)).expect("pattern"),
-    ))
+    Router::new()
+        .route(Route::new("/hello").expect("pattern").get(hello))
+        .route(Route::new("/peer").expect("pattern").get(peer))
+        .route(Route::new("/echo").expect("pattern").post(echo))
+        .route(Route::new("/slow").expect("pattern").get(slow))
+        .route(Route::new("/stuck").expect("pattern").get(stuck))
+        .route(Route::new("/tag").expect("pattern").get(tag))
 }
 
 /// A server running on a spawned task.
@@ -100,7 +123,7 @@ impl Running {
 }
 
 /// Serves the test routes; a dropped stop sender also shuts the server down.
-pub fn spawn<L: Listener>(server: Server<L>) -> Running {
+pub fn spawn<L: Listener, W: TaskWrap>(server: Server<L, Hyper, W>) -> Running {
     let (stop, stopped) = oneshot::channel::<()>();
     let task = tokio::spawn(server.serve(routes(), async {
         let _ = stopped.await;

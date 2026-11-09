@@ -5,7 +5,7 @@ use fast_http_core::{
     ErrorHandler, ErrorResponse, Flow, HandlerError, IntoResponse, Next, ReqBody, Request,
     Response, ResponseBody, Routes, reject,
 };
-use fast_http_router::{Route, Router, get};
+use fast_http_router::{Route, Router};
 use http::{HeaderValue, StatusCode, request::Parts};
 use http_body_util::{BodyExt, Full};
 
@@ -104,7 +104,7 @@ impl ErrorHandler for Marking {
 
 /// A router with one `/trace` route.
 pub fn router() -> Router<impl fast_http_router::RouteList> {
-    Router::new((Route::new("/trace", (get(trace),)).expect("valid pattern"),))
+    Router::new().route(Route::new("/trace").expect("valid pattern").get(trace))
 }
 
 /// Dispatches a GET to `uri`.

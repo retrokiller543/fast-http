@@ -3,49 +3,11 @@ use fast_http_core::{
     PathParams, Rejection, ReqBody, Request, Response, Routes, Stack, flow,
 };
 
-use crate::{ParamBuf, Pattern, RouteList};
+use crate::{Append, ParamBuf, Pattern, Route, RouteList};
 
-/// Candidate routes for each literal first segment, computed once so a request never scans every route.
-#[derive(Debug)]
-struct Index {
-    literal: Vec<(&'static str, Box<[u16]>)>,
-    dynamic: Box<[u16]>,
-}
+use self::index::Index;
 
-impl Index {
-    fn build<L: RouteList>(routes: &L) -> Self {
-        let firsts: Vec<Option<&'static str>> = (0..L::LEN)
-            .map(|index| routes.pattern(index).first_literal())
-            .collect();
-        let mut keys: Vec<&'static str> = firsts.iter().flatten().copied().collect();
-
-        keys.sort_unstable();
-        keys.dedup();
-
-        let candidates = |key: Option<&str>| -> Box<[u16]> {
-            (0..L::LEN)
-                .filter(|&index| firsts[index].is_none() || firsts[index] == key)
-                .map(|index| index as u16)
-                .collect()
-        };
-        let literal = keys
-            .into_iter()
-            .map(|key| (key, candidates(Some(key))))
-            .collect();
-
-        Self {
-            literal,
-            dynamic: candidates(None),
-        }
-    }
-
-    fn candidates(&self, first: &str) -> &[u16] {
-        match self.literal.binary_search_by_key(&first, |entry| entry.0) {
-            Ok(position) => &self.literal[position].1,
-            Err(_) => &self.dynamic,
-        }
-    }
-}
+mod index;
 
 /// Statically typed router: tries the first matching route and sends misses through the error handler.
 ///
@@ -59,17 +21,81 @@ pub struct Router<L, H = DefaultErrorHandler, F = Identity> {
     flow: F,
 }
 
-impl<L: RouteList> Router<L> {
-    /// Builds the lookup index for `routes`, a tuple of up to 12 [`Route`](crate::Route)s tried in order.
-    pub fn new(routes: L) -> Self {
-        let index = Index::build(&routes);
-
+impl Router<()> {
+    /// An empty router; add routes with [`Router::route`]. Every request is a 404 until then.
+    pub fn new() -> Self {
         Self {
-            routes,
+            routes: (),
             handler: DefaultErrorHandler,
             options: DispatchOptions::default(),
-            index,
+            index: Index::default(),
             flow: Identity,
+        }
+    }
+}
+
+impl Default for Router<()> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<L: RouteList, H, F> Router<L, H, F> {
+    /// Appends `route`; routes are tried in the order they are added.
+    ///
+    /// # Panics
+    ///
+    /// When the router already holds `u32::MAX` routes.
+    pub fn route<S, G>(self, route: Route<S, G>) -> Router<L::Output, H, F>
+    where
+        L: Append<Route<S, G>>,
+    {
+        let mut index = self.index;
+
+        index.push(route.pattern().first_literal(), L::LEN);
+
+        Router {
+            routes: self.routes.append(route),
+            handler: self.handler,
+            options: self.options,
+            index,
+            flow: self.flow,
+        }
+    }
+}
+
+impl<L: RouteList, H, F> Router<L, H, F> {
+    /// Appends the routes of `group` after this router's own, keeping their order.
+    ///
+    /// Building a large route table as one long [`route`](Router::route) chain makes every step a
+    /// bigger type, so compile time and debug-build stack use grow with the square of the chain
+    /// length. Build routes in groups, such as one function per controller, and merge them.
+    ///
+    /// `group` joins as one element, contributing only its routes; give it no error handler,
+    /// flows or options.
+    ///
+    /// # Panics
+    ///
+    /// When the merged router would hold more than `u32::MAX` routes.
+    pub fn merge<M: RouteList>(self, group: Router<M>) -> Router<L::Output, H, F>
+    where
+        L: Append<M>,
+    {
+        let mut index = self.index;
+
+        for position in 0..M::LEN {
+            index.push(
+                group.routes.pattern(position).first_literal(),
+                L::LEN + position,
+            );
+        }
+
+        Router {
+            routes: self.routes.append(group.routes),
+            handler: self.handler,
+            options: self.options,
+            index,
+            flow: self.flow,
         }
     }
 }
@@ -120,7 +146,7 @@ impl<L: RouteList, H, F> Router<L, H, F> {
         self.index
             .candidates(first)
             .iter()
-            .map(|&candidate| usize::from(candidate))
+            .map(|&candidate| candidate as usize)
             .find(|&index| self.routes.pattern(index).matches(path, buf))
     }
 

@@ -4,21 +4,27 @@ use fast_http_core::{BoxError, Routes};
 use fast_http_transport::{ConnInfo, Connection};
 use tokio::sync::watch;
 
-use crate::Settings;
+use crate::{Settings, TaskWrap};
 
 mod hyper;
 
-pub use self::hyper::Hyper;
+pub use self::hyper::{Hyper, HyperState, Spawner};
 
 /// Protocol engine: speaks HTTP over one established connection.
-pub trait Engine: Send + Sync + Sized + 'static {
-    /// Builds the engine once per server from its settings.
-    fn new(settings: &Settings) -> Self;
+///
+/// The implementing type is a marker; the server builds one [`State`](Engine::State) per run,
+/// specialised for the [`TaskWrap`] that wraps the tasks the engine spawns.
+pub trait Engine: 'static {
+    /// Per-server engine state for task wrapper `W`.
+    type State<W: TaskWrap>: Send + Sync + 'static;
+
+    /// Builds the state once per server from its settings and task wrapper.
+    fn new<W: TaskWrap>(settings: &Settings, tasks: W) -> Self::State<W>;
 
     /// Serves requests on `conn` until the peer closes it. When `shutdown` fires, stops taking
     /// new requests, finishes in-flight ones and returns.
-    fn serve<C: Connection, R: Routes>(
-        &self,
+    fn serve<W: TaskWrap, C: Connection, R: Routes>(
+        state: &Self::State<W>,
         conn: C,
         info: ConnInfo,
         routes: Arc<R>,

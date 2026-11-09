@@ -7,7 +7,7 @@ Runs `fast_http_core::Routes` on any `fast_http_transport::Transport`. It provid
 ## Usage
 
 ```rust
-let routes = Router::new((Route::new("/users/{id}", (get(show),))?,));
+let routes = Router::new().route(Route::new("/users/{id}")?.get(show));
 let server = Server::bind(&Tcp::new(), "127.0.0.1:3000".parse()?)
     .await?
     .config::<MyPreset>()
@@ -20,11 +20,12 @@ server.serve(routes, async { tokio::signal::ctrl_c().await.ok(); }).await;
 - The server owns the routes, shared between connection tasks through one `Arc`.
 - Plain TCP is the expected setup behind a TLS-terminating proxy. For direct exposure, wrap the transport in `Tls` (the `tls` feature).
 - On shutdown the server stops accepting, the engine finishes in-flight requests (h2 GOAWAY, h1 `Connection: close`), and connections still open after `drain_timeout` are aborted.
+- `.task_wrap(w)` wraps every task the server spawns (connection tasks and HTTP/2 stream tasks) with a `TaskWrap`, so an embedding framework can carry its context, such as Upwell's DI context or a tracing span, into handlers. The default `Plain` spawns tasks unchanged.
 - `just serve` runs `examples/hello.rs`: plain HTTP/1.1 and h2c on 127.0.0.1:3000.
 
 ## Internal role
 
-Each accepted connection is spawned onto a `JoinSet`. The establish step (the TLS handshake) runs there, bounded by `handshake_timeout`. While `max_connections` connections are open, the loop stops accepting. The default `Hyper` engine serves HTTP/1.1 and HTTP/2 on every connection: cleartext h2 is detected by its prior-knowledge preface, and over TLS the client's ALPN choice decides. Request bodies are wrapped in `Limited` (`max_body_bytes`), and a `PeerAddr` extension is inserted unless `peer_addr` is off. Logs use the `fast_http::server` target.
+Each accepted connection is spawned onto a `JoinSet`. The establish step (the TLS handshake) runs there, bounded by `handshake_timeout`. While `max_connections` connections are open, the loop stops accepting. The default `Hyper` engine serves HTTP/1.1 and HTTP/2 on every connection: cleartext h2 is detected by its prior-knowledge preface, and over TLS the client's ALPN choice decides. The engine is a marker type whose per-server `State<W>` is built once for the server's `TaskWrap`; `Hyper` puts the wrapper into its hyper executor (`Spawner`), so h2 stream tasks are wrapped too. Request bodies are wrapped in `Limited` (`max_body_bytes`), and a `PeerAddr` extension is inserted unless `peer_addr` is off. Logs use the `fast_http::server` target.
 
 ## Feature flags
 

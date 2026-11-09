@@ -11,7 +11,7 @@ use http_body_util::Full;
 use fast_http_core::{ErrorHandler, Flow, Next, ReqBody, reject};
 
 use super::*;
-use crate::{Route, get, post};
+use crate::Route;
 
 async fn show(Path(id): Path<u64>) -> String {
     format!("user {id}")
@@ -51,25 +51,42 @@ async fn health() -> &'static str {
 }
 
 fn router() -> Router<impl RouteList> {
-    Router::new((
-        Route::new("/users/{id}", (get(show),)).expect("valid pattern"),
-        Route::new("/users", (post(create),)).expect("valid pattern"),
-        Route::new("/repos/{org}/{repo}", (get(pair),)).expect("valid pattern"),
-        Route::new("/files/{**rest}", (get(files),)).expect("valid pattern"),
-        Route::new("/named/{a}/{b}", (get(named),)).expect("valid pattern"),
-        Route::new("/named-borrowed/{a}/{b}", (get(named_borrowed),)).expect("valid pattern"),
-        Route::new("/mixed/{org}/{id}", (get(mixed),)).expect("valid pattern"),
-        Route::new(
-            "/closure/{id}",
-            (get(|Path(id): Path<u64>, method: &Method| {
+    Router::new()
+        .route(Route::new("/users/{id}").expect("valid pattern").get(show))
+        .route(Route::new("/users").expect("valid pattern").post(create))
+        .route(
+            Route::new("/repos/{org}/{repo}")
+                .expect("valid pattern")
+                .get(pair),
+        )
+        .route(
+            Route::new("/files/{**rest}")
+                .expect("valid pattern")
+                .get(files),
+        )
+        .route(
+            Route::new("/named/{a}/{b}")
+                .expect("valid pattern")
+                .get(named),
+        )
+        .route(
+            Route::new("/named-borrowed/{a}/{b}")
+                .expect("valid pattern")
+                .get(named_borrowed),
+        )
+        .route(
+            Route::new("/mixed/{org}/{id}")
+                .expect("valid pattern")
+                .get(mixed),
+        )
+        .route(Route::new("/closure/{id}").expect("valid pattern").get(
+            |Path(id): Path<u64>, method: &Method| {
                 let method = method.to_string();
 
                 async move { format!("{method} {id}") }
-            }),),
-        )
-        .expect("valid pattern"),
-        Route::new("/{**any}", (get(health),)).expect("valid pattern"),
-    ))
+            },
+        ))
+        .route(Route::new("/{**any}").expect("valid pattern").get(health))
 }
 
 fn send<R: Routes>(router: &R, method: Method, uri: &str) -> (StatusCode, String, Response) {
@@ -164,7 +181,7 @@ fn dispatch_wrong_method_returns_405_with_allow() {
 
 #[test]
 fn dispatch_no_matching_route_returns_404() {
-    let router = Router::new((Route::new("/a", (get(health),)).expect("valid pattern"),));
+    let router = Router::new().route(Route::new("/a").expect("valid pattern").get(health));
 
     let (status, ..) = send(&router, Method::GET, "/b");
 
@@ -270,15 +287,20 @@ impl ErrorHandler for Marking {
 }
 
 fn layered_routes() -> Router<impl RouteList> {
-    Router::new((
-        Route::new("/open", (get(health),)).expect("valid pattern"),
-        Route::new("/closed", (get(health),))
-            .expect("valid pattern")
-            .layer(Deny),
-        Route::new("/moved/{id}", (get(show),))
-            .expect("valid pattern")
-            .layer(Rewrite),
-    ))
+    Router::new()
+        .route(Route::new("/open").expect("valid pattern").get(health))
+        .route(
+            Route::new("/closed")
+                .expect("valid pattern")
+                .get(health)
+                .layer(Deny),
+        )
+        .route(
+            Route::new("/moved/{id}")
+                .expect("valid pattern")
+                .get(show)
+                .layer(Rewrite),
+        )
 }
 
 #[test]
@@ -310,3 +332,5 @@ fn router_layer_errors_use_central_error_handler() {
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(response.headers()["x-handled"], "yes");
 }
+
+mod growth;
