@@ -12,7 +12,7 @@ use self::{
     config::{Config, Framework, Named, Profile, Scenario},
     oha::{Limit, Load, Outcome},
     report::{Allocations, FrameworkReport, Measured, Phase, Report},
-    rss::{Memory, Sampler},
+    rss::{Memory, Sampler, cpu_per_request},
     server::ServerProcess,
 };
 
@@ -131,6 +131,12 @@ fn measure(config: &Config, framework: Framework) -> Result<FrameworkReport, Loa
 
     for load in &mut loads {
         load.memory = Memory::over(&samples, load.phase.start_ms, load.phase.end_ms);
+        load.cpu_us = cpu_per_request(
+            &samples,
+            load.phase.start_ms,
+            load.phase.end_ms,
+            load.outcome.responses,
+        );
     }
 
     Ok(FrameworkReport {
@@ -212,5 +218,6 @@ fn measured(profile: Profile, scenario: Scenario, outcome: Outcome, phase: Phase
         outcome,
         phase,
         memory: None,
+        cpu_us: None,
     }
 }

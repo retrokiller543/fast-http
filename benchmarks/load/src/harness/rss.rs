@@ -14,13 +14,36 @@ use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 
 use super::LoadError;
 
-/// One RSS reading.
+/// One reading of the server process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct Sample {
     /// Milliseconds since the server started.
     pub at_ms: u64,
     /// Resident set size in bytes.
     pub rss: u64,
+    /// CPU time the process has used so far, in milliseconds, all threads together.
+    pub cpu_ms: u64,
+}
+
+/// Server CPU microseconds per response between the first and last sample in
+/// `[start_ms, end_ms]`; `None` without two samples or without responses.
+pub fn cpu_per_request(
+    samples: &[Sample],
+    start_ms: u64,
+    end_ms: u64,
+    responses: u64,
+) -> Option<f64> {
+    let mut within = samples
+        .iter()
+        .filter(|sample| (start_ms..=end_ms).contains(&sample.at_ms));
+    let first = within.next()?;
+    let last = within.next_back()?;
+
+    if responses == 0 {
+        return None;
+    }
+
+    Some(last.cpu_ms.saturating_sub(first.cpu_ms) as f64 * 1_000.0 / responses as f64)
 }
 
 /// Mean and peak RSS over a span of time.
@@ -84,7 +107,7 @@ fn sample(
     stop: &AtomicBool,
 ) -> Vec<Sample> {
     let mut samples = Vec::new();
-    let kind = ProcessRefreshKind::nothing().with_memory();
+    let kind = ProcessRefreshKind::nothing().with_memory().with_cpu();
 
     while !stop.load(Relaxed) {
         system.refresh_processes_specifics(ProcessesToUpdate::Some(&[pid]), true, kind);
@@ -93,6 +116,7 @@ fn sample(
             samples.push(Sample {
                 at_ms: u64::try_from(origin.elapsed().as_millis()).unwrap_or(u64::MAX),
                 rss: process.memory(),
+                cpu_ms: process.accumulated_cpu_time(),
             });
         }
 

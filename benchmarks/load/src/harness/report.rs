@@ -101,6 +101,8 @@ pub struct Measured {
     pub phase: Phase,
     /// Server RSS during the phase.
     pub memory: Option<Memory>,
+    /// Server CPU microseconds per response.
+    pub cpu_us: Option<f64>,
 }
 
 /// Writes the report to a new `<output>/<unix seconds>` directory and returns it.
@@ -124,7 +126,7 @@ pub fn write(report: &Report, output: &Path) -> Result<PathBuf, LoadError> {
 fn write_rss(report: &Report, path: &Path) -> Result<(), LoadError> {
     let mut csv = BufWriter::new(File::create(path)?);
 
-    writeln!(csv, "framework,phase,at_ms,rss_bytes")?;
+    writeln!(csv, "framework,phase,at_ms,rss_bytes,cpu_ms")?;
 
     for framework in &report.frameworks {
         for sample in &framework.samples {
@@ -136,10 +138,11 @@ fn write_rss(report: &Report, path: &Path) -> Result<(), LoadError> {
 
             writeln!(
                 csv,
-                "{},{phase},{},{}",
+                "{},{phase},{},{},{}",
                 framework.framework.name(),
                 sample.at_ms,
-                sample.rss
+                sample.rss,
+                sample.cpu_ms
             )?;
         }
     }
@@ -161,6 +164,7 @@ pub fn markdown(report: &Report) -> String {
             "scenario",
             "framework",
             "req/s",
+            "cpu µs/req",
             "p50 ms",
             "p90 ms",
             "p99 ms",
@@ -172,7 +176,7 @@ pub fn markdown(report: &Report) -> String {
             "peak RSS",
         ],
     );
-    separator(&mut out, 13);
+    separator(&mut out, 14);
 
     for &profile in &report.config.profiles {
         for &scenario in &report.config.scenarios {
@@ -193,6 +197,9 @@ pub fn markdown(report: &Report) -> String {
                         scenario.name(),
                         framework.framework.name(),
                         &format!("{:.0}", outcome.throughput),
+                        &load
+                            .cpu_us
+                            .map_or_else(|| "-".to_owned(), |us| format!("{us:.1}")),
                         &millis(outcome.latency.p50),
                         &millis(outcome.latency.p90),
                         &millis(outcome.latency.p99),
