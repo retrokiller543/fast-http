@@ -1,0 +1,43 @@
+[package]
+name = "fast-http-format"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[features]
+default = ["json"]
+full = ["json", "form", "yaml", "toml", "cbor", "msgpack", "xml", "problem"]
+json = ["dep:serde_json"]
+form = ["dep:serde_urlencoded"]
+yaml = ["dep:serde_norway"]
+toml = ["dep:toml"]
+cbor = ["dep:ciborium"]
+msgpack = ["dep:rmp-serde"]
+xml = ["dep:quick-xml"]
+problem = ["json"]
+
+[dependencies]
+bytes.workspace = true
+fast-http-core = { path = "../core" }
+futures-core.workspace = true
+http.workspace = true
+http-body.workspace = true
+http-body-util.workspace = true
+pin-project-lite.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+ciborium = { workspace = true, optional = true }
+quick-xml = { workspace = true, optional = true }
+rmp-serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+serde_norway = { workspace = true, optional = true }
+serde_urlencoded = { workspace = true, optional = true }
+toml = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

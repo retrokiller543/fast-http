@@ -9,3 +9,10 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+http = { workspace = true }
+http-body = { workspace = true }
+http-body-util = { workspace = true }
+bytes = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+pin-project-lite = { workspace = true }
