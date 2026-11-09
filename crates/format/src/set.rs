@@ -123,42 +123,24 @@ tuple_set!(4; A: 0, B: 1, C: 2, D: 3);
 tuple_set!(5; A: 0, B: 1, C: 2, D: 3, E: 4);
 tuple_set!(6; A: 0, B: 1, C: 2, D: 3, E: 4, F: 5);
 
+macro_rules! impl_set {
+    ($vis:vis $ident:ident = ($feat:literal, $ty:ty); prev = $prev:ty) => {
+        #[cfg(feature = $feat)]
+        $vis type $ident = Cons<$ty, $prev>;
+        #[cfg(not(feature = $feat))]
+        $vis type $ident = $prev;
+    };
+}
+
 type Set0 = Nil;
 
-#[cfg(feature = "xml")]
-type Set1 = Cons<crate::formats::Xml, Set0>;
-#[cfg(not(feature = "xml"))]
-type Set1 = Set0;
-
-#[cfg(feature = "msgpack")]
-type Set2 = Cons<crate::formats::MessagePack, Set1>;
-#[cfg(not(feature = "msgpack"))]
-type Set2 = Set1;
-
-#[cfg(feature = "cbor")]
-type Set3 = Cons<crate::formats::Cbor, Set2>;
-#[cfg(not(feature = "cbor"))]
-type Set3 = Set2;
-
-#[cfg(feature = "toml")]
-type Set4 = Cons<crate::formats::Toml, Set3>;
-#[cfg(not(feature = "toml"))]
-type Set4 = Set3;
-
-#[cfg(feature = "yaml")]
-type Set5 = Cons<crate::formats::Yaml, Set4>;
-#[cfg(not(feature = "yaml"))]
-type Set5 = Set4;
-
-#[cfg(feature = "form")]
-type Set6 = Cons<crate::formats::Form, Set5>;
-#[cfg(not(feature = "form"))]
-type Set6 = Set5;
-
-#[cfg(feature = "json")]
-type Set7 = Cons<crate::formats::Json, Set6>;
-#[cfg(not(feature = "json"))]
-type Set7 = Set6;
+impl_set!(Set1 = ("xml", crate::formats::Xml); prev = Set0);
+impl_set!(Set2 = ("msgpack", crate::formats::MessagePack); prev = Set1);
+impl_set!(Set3 = ("cbor", crate::formats::Cbor); prev = Set2);
+impl_set!(Set4 = ("toml", crate::formats::Toml); prev = Set3);
+impl_set!(Set5 = ("yaml", crate::formats::Yaml); prev = Set4);
+impl_set!(Set6 = ("form", crate::formats::Form); prev = Set5);
+impl_set!(Set7 = ("json", crate::formats::Json); prev = Set6);
 
 /// Every format whose Cargo feature is enabled, JSON first; the default set of `Negotiated` and `Body`.
 pub type Enabled = Set7;

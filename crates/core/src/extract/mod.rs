@@ -1,6 +1,6 @@
 use std::convert::Infallible;
 
-use http::{Method, Uri, Version, request::Parts};
+use http::{Extensions, HeaderMap, Method, Uri, Version, request::Parts};
 
 use crate::{ErrorResponse, ReqBody};
 
@@ -70,3 +70,29 @@ impl<T: FromParts> FromParts for Result<T, T::Rejection> {
         Ok(T::from_parts(parts))
     }
 }
+
+macro_rules! borrowed_head {
+    ($($ty:ty => |$parts:ident| $field:expr),+ $(,)?) => {
+        $(
+            impl<'a> FromParams for &'a $ty {
+                type Rejection = Infallible;
+                type At<'r> = &'r $ty;
+
+                fn from_params<'r>(
+                    $parts: &'r Parts,
+                    _: &PathParams<'r>,
+                ) -> Result<Self::At<'r>, Self::Rejection> {
+                    Ok($field)
+                }
+            }
+        )+
+    };
+}
+
+borrowed_head!(
+    Parts => |parts| parts,
+    HeaderMap => |parts| &parts.headers,
+    Method => |parts| &parts.method,
+    Uri => |parts| &parts.uri,
+    Extensions => |parts| &parts.extensions,
+);

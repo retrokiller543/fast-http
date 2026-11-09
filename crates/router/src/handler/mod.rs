@@ -13,31 +13,38 @@ pub struct ViaParams;
 pub struct ViaBody;
 
 /// Builds one handler argument; the marker `M` keeps the head-only and body-consuming paths apart.
-pub trait Extract<M>: Sized {
+pub trait Extract<M> {
+    /// Value produced for a request borrowed for `'r`.
+    type At<'r>: Send;
+
     /// Extracts the argument, failing with an already-boxed error.
-    fn extract<B: ReqBody>(
-        parts: &Parts,
-        params: &PathParams<'_>,
+    fn extract<'r, B: ReqBody>(
+        parts: &'r Parts,
+        params: &PathParams<'r>,
         body: B,
-    ) -> impl Future<Output = Result<Self, HandlerError>> + Send;
+    ) -> impl Future<Output = Result<Self::At<'r>, HandlerError>> + Send;
 }
 
 impl<T: FromParams> Extract<ViaParams> for T {
-    async fn extract<B: ReqBody>(
-        parts: &Parts,
-        params: &PathParams<'_>,
+    type At<'r> = T::At<'r>;
+
+    async fn extract<'r, B: ReqBody>(
+        parts: &'r Parts,
+        params: &PathParams<'r>,
         body: B,
-    ) -> Result<Self, HandlerError> {
+    ) -> Result<Self::At<'r>, HandlerError> {
         drop(body);
 
         T::from_params(parts, params).map_err(HandlerError::from)
     }
 }
 
-impl<T: FromRequest> Extract<ViaBody> for T {
-    async fn extract<B: ReqBody>(
-        parts: &Parts,
-        _: &PathParams<'_>,
+impl<T: FromRequest + Send> Extract<ViaBody> for T {
+    type At<'r> = T;
+
+    async fn extract<'r, B: ReqBody>(
+        parts: &'r Parts,
+        _: &PathParams<'r>,
         body: B,
     ) -> Result<Self, HandlerError> {
         T::from_request(parts, body)
@@ -46,13 +53,51 @@ impl<T: FromRequest> Extract<ViaBody> for T {
     }
 }
 
+/// Calls a function with arguments borrowed for `'r`, naming the returned future.
+///
+/// Implemented for every `Fn` of up to six arguments. [`Handler`] requires it for all `'r`, which
+/// is what lets plain `async fn`s take borrowed extractors such as `&Parts` or `Path<&str>`.
+pub trait Call<'r, Args>: Send + Sync {
+    /// Value the future resolves to.
+    type Output;
+    /// Future returned by the function.
+    type Future: Future<Output = Self::Output> + Send;
+
+    /// Calls the function with `args`.
+    fn call(&self, args: Args) -> Self::Future;
+}
+
+macro_rules! call_impl {
+    ($($t:ident $v:ident),+) => {
+        impl<'r, F, Fut, $($t),+> Call<'r, ($($t,)+)> for F
+        where
+            F: Fn($($t),+) -> Fut + Send + Sync,
+            Fut: Future + Send,
+        {
+            type Output = Fut::Output;
+            type Future = Fut;
+
+            fn call(&self, ($($v,)+): ($($t,)+)) -> Fut {
+                self($($v),+)
+            }
+        }
+    };
+}
+
+call_impl!(T1 v1);
+call_impl!(T1 v1, T2 v2);
+call_impl!(T1 v1, T2 v2, T3 v3);
+call_impl!(T1 v1, T2 v2, T3 v3, T4 v4);
+call_impl!(T1 v1, T2 v2, T3 v3, T4 v4, T5 v5);
+call_impl!(T1 v1, T2 v2, T3 v3, T4 v4, T5 v5, T6 v6);
+
 /// An async function whose arguments are extractors and whose return value converts into a response.
 pub trait Handler<M>: Send + Sync + 'static {
     /// Extracts the arguments, runs the function and renders its result, routing every error through `handler`.
-    fn call<B: ReqBody, H: ErrorHandler>(
+    fn call<'r, B: ReqBody, H: ErrorHandler>(
         &self,
-        parts: &Parts,
-        params: PathParams<'_>,
+        parts: &'r Parts,
+        params: PathParams<'r>,
         body: B,
         handler: &H,
     ) -> impl Future<Output = Response> + Send;
@@ -64,10 +109,10 @@ where
     Fut: Future<Output = R> + Send,
     R: IntoOutcome,
 {
-    async fn call<B: ReqBody, H: ErrorHandler>(
+    async fn call<'r, B: ReqBody, H: ErrorHandler>(
         &self,
-        parts: &Parts,
-        _: PathParams<'_>,
+        parts: &'r Parts,
+        _: PathParams<'r>,
         body: B,
         handler: &H,
     ) -> Response {
@@ -85,15 +130,16 @@ macro_rules! handler_impl {
         impl<F, Fut, R, M, $($t,)* $l> Handler<(M, $($t,)* $l)> for F
         where
             F: Fn($($t,)* $l) -> Fut + Send + Sync + 'static,
-            Fut: Future<Output = R> + Send,
+            Fut: Future<Output = R>,
             R: IntoOutcome,
-            $($t: FromParams + Send,)*
-            $l: Extract<M> + Send,
+            $($t: FromParams,)*
+            $l: Extract<M>,
+            for<'r> F: Call<'r, ($($t::At<'r>,)* <$l as Extract<M>>::At<'r>,), Output = R>,
         {
-            async fn call<B: ReqBody, H: ErrorHandler>(
+            async fn call<'r, B: ReqBody, H: ErrorHandler>(
                 &self,
-                parts: &Parts,
-                params: PathParams<'_>,
+                parts: &'r Parts,
+                params: PathParams<'r>,
                 body: B,
                 handler: &H,
             ) -> Response {
@@ -107,8 +153,9 @@ macro_rules! handler_impl {
                     Ok(value) => value,
                     Err(error) => return handler.handle(error, parts).await,
                 };
+                let output = <F as Call<'r, _>>::call(self, ($($v,)* $lv,)).await;
 
-                match self($($v,)* $lv).await.into_outcome(parts) {
+                match output.into_outcome(parts) {
                     Ok(response) => response,
                     Err(error) => handler.handle(error, parts).await,
                 }
@@ -160,10 +207,10 @@ impl<F: Handler<M>, M: 'static> Endpoint for FnEndpoint<F, M> {
         self.guard.is_none_or(|guard| guard(parts))
     }
 
-    fn call<B: ReqBody, H: ErrorHandler>(
+    fn call<'r, B: ReqBody, H: ErrorHandler>(
         &self,
-        parts: &Parts,
-        params: PathParams<'_>,
+        parts: &'r Parts,
+        params: PathParams<'r>,
         body: B,
         handler: &H,
     ) -> impl Future<Output = Response> + Send {

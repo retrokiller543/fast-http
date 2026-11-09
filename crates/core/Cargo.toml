@@ -16,3 +16,11 @@ bytes = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 pin-project-lite = { workspace = true }
+
+[dev-dependencies]
+criterion.workspace = true
+fast-http-bench-support.workspace = true
+
+[[bench]]
+name = "core"
+harness = false

@@ -1,0 +1,36 @@
+[package]
+name = "fast-http-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish = false
+
+[dependencies]
+actix-router.workspace = true
+axum.workspace = true
+bytes.workspace = true
+fast-http-core.workspace = true
+fast-http-format = { workspace = true, features = ["json"] }
+fast-http-router.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+matchit.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+fast-http-bench-support.workspace = true
+tower.workspace = true
+
+[[bench]]
+name = "routing"
+harness = false
+
+[[bench]]
+name = "stack"
+harness = false

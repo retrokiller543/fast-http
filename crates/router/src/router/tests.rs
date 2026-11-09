@@ -5,7 +5,7 @@ use std::{
 
 use bytes::Bytes;
 use fast_http_core::{Path, Segments};
-use http::{Method, Request as HttpRequest, StatusCode, header};
+use http::{HeaderMap, Method, Request as HttpRequest, StatusCode, header, request::Parts};
 use http_body_util::Full;
 
 use super::*;
@@ -15,16 +15,29 @@ async fn show(Path(id): Path<u64>) -> String {
     format!("user {id}")
 }
 
-async fn pair(Path((org, repo)): Path<(String, String)>) -> String {
+async fn pair(Path((org, repo)): Path<(&str, &str)>) -> String {
     format!("{org}/{repo}")
 }
 
-async fn files(Path(rest): Path<Segments>) -> String {
-    rest.0.join("|")
+async fn files(Path(rest): Path<Segments<'_>>) -> String {
+    rest.iter().collect::<Vec<_>>().join("|")
 }
 
 async fn named(Path(map): Path<std::collections::BTreeMap<String, String>>) -> String {
     format!("{map:?}")
+}
+
+async fn named_borrowed(Path(map): Path<std::collections::BTreeMap<&str, &str>>) -> String {
+    format!("{map:?}")
+}
+
+async fn mixed(Path((org, id)): Path<(&str, u64)>, parts: &Parts, headers: &HeaderMap) -> String {
+    let agent = headers
+        .get(header::USER_AGENT)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("-");
+
+    format!("{} {org}#{id} {agent}", parts.method)
 }
 
 async fn create() -> StatusCode {
@@ -42,6 +55,17 @@ fn router() -> Router<impl RouteList> {
         Route::new("/repos/{org}/{repo}", (get(pair),)).expect("valid pattern"),
         Route::new("/files/{**rest}", (get(files),)).expect("valid pattern"),
         Route::new("/named/{a}/{b}", (get(named),)).expect("valid pattern"),
+        Route::new("/named-borrowed/{a}/{b}", (get(named_borrowed),)).expect("valid pattern"),
+        Route::new("/mixed/{org}/{id}", (get(mixed),)).expect("valid pattern"),
+        Route::new(
+            "/closure/{id}",
+            (get(|Path(id): Path<u64>, method: &Method| {
+                let method = method.to_string();
+
+                async move { format!("{method} {id}") }
+            }),),
+        )
+        .expect("valid pattern"),
         Route::new("/{**any}", (get(health),)).expect("valid pattern"),
     ))
 }
@@ -55,6 +79,7 @@ fn send<L: RouteList>(
     let request = HttpRequest::builder()
         .method(method)
         .uri(uri)
+        .header(header::USER_AGENT, "test")
         .body(Full::new(Bytes::new()))
         .expect("valid request");
     let Poll::Ready(response) = pin!(router.dispatch(request)).poll(&mut cx) else {
@@ -155,4 +180,46 @@ fn dispatch_post_literal_route_returns_created() {
     let (status, ..) = send(&router, Method::POST, "/users");
 
     assert_eq!(status, StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn dispatch_borrowed_map_path_borrows_names_and_values() {
+    let router = router();
+
+    let (_, _, response) = send(&router, Method::GET, "/named-borrowed/x/y");
+
+    assert_eq!(body_text(response).await, r#"{"a": "x", "b": "y"}"#);
+}
+
+#[tokio::test]
+async fn dispatch_mixed_borrowed_and_owned_extractors() {
+    let router = router();
+
+    let (_, _, response) = send(&router, Method::GET, "/mixed/rust/7");
+
+    assert_eq!(body_text(response).await, "GET rust#7 test");
+}
+
+#[tokio::test]
+async fn dispatch_closure_handler_with_borrowed_argument() {
+    let router = router();
+
+    let (_, _, response) = send(&router, Method::GET, "/closure/9");
+
+    assert_eq!(body_text(response).await, "GET 9");
+}
+
+#[tokio::test]
+async fn dispatch_future_with_borrowed_extractors_is_spawnable() {
+    let router = router();
+    let request = HttpRequest::builder()
+        .uri("/mixed/rust/7")
+        .body(Full::new(Bytes::new()))
+        .expect("valid request");
+
+    let response = tokio::spawn(async move { router.dispatch(request).await })
+        .await
+        .expect("task completes");
+
+    assert_eq!(response.status(), StatusCode::OK);
 }

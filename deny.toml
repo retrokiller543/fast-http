@@ -1,0 +1,19 @@
+[graph]
+all-features = true
+
+[bans]
+multiple-versions = "allow"
+wildcards = "allow"
+deny = [
+    { crate = "openssl", reason = "rustls only" },
+    { crate = "openssl-sys", reason = "rustls only" },
+    { crate = "native-tls", reason = "rustls only" },
+    { crate = "rsa", reason = "RUSTSEC-2023-0071 timing side channel" },
+]
+
+[advisories]
+ignore = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

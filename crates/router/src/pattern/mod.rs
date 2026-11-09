@@ -151,7 +151,7 @@ impl Pattern {
             return false;
         };
 
-        *out = ParamBuf::new();
+        out.len = 0;
 
         if self.segments.is_empty() {
             return rest.is_empty();

@@ -36,10 +36,10 @@ pub trait Endpoint: Send + Sync + 'static {
     }
 
     /// Extracts arguments, runs the handler and renders its response, routing every error through `handler`.
-    fn call<B: ReqBody, H: ErrorHandler>(
+    fn call<'r, B: ReqBody, H: ErrorHandler>(
         &self,
-        parts: &Parts,
-        params: PathParams<'_>,
+        parts: &'r Parts,
+        params: PathParams<'r>,
         body: B,
         handler: &H,
     ) -> impl Future<Output = Response> + Send;

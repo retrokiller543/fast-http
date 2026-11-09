@@ -22,7 +22,7 @@ problem = ["json"]
 
 [dependencies]
 bytes.workspace = true
-fast-http-core = { path = "../core" }
+fast-http-core.workspace = true
 futures-core.workspace = true
 http.workspace = true
 http-body.workspace = true
@@ -40,4 +40,10 @@ serde_urlencoded = { workspace = true, optional = true }
 toml = { workspace = true, optional = true }
 
 [dev-dependencies]
+criterion.workspace = true
+fast-http-bench-support.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
+
+[[bench]]
+name = "format"
+harness = false

@@ -3,7 +3,7 @@ use fast_http_core::{
     ReqBody, Request, Response, Routes,
 };
 
-use crate::{ParamBuf, RouteList};
+use crate::{ParamBuf, Pattern, RouteList};
 
 /// Candidate routes for each literal first segment, computed once so a request never scans every route.
 #[derive(Debug)]
@@ -89,36 +89,46 @@ impl<L, H> Router<L, H> {
     }
 }
 
-impl<L: RouteList, H: ErrorHandler> Routes for Router<L, H> {
-    async fn dispatch<B: ReqBody>(&self, req: Request<B>) -> Response {
-        let (parts, body) = req.into_parts();
-        let path = parts.uri.path();
+impl<L: RouteList, H> Router<L, H> {
+    /// Finds the first route matching `path`, filling `buf` with its captured values.
+    ///
+    /// Returns the route's position; [`Router::pattern`] gives the parameter names for `buf`.
+    pub fn lookup<'p>(&self, path: &'p str, buf: &mut ParamBuf<'p>) -> Option<usize> {
         let first = path
             .strip_prefix('/')
             .unwrap_or(path)
             .split('/')
             .next()
             .unwrap_or_default();
+
+        self.index
+            .candidates(first)
+            .iter()
+            .map(|&candidate| usize::from(candidate))
+            .find(|&index| self.routes.pattern(index).matches(path, buf))
+    }
+
+    /// The pattern of the route at `index`.
+    pub fn pattern(&self, index: usize) -> &Pattern {
+        self.routes.pattern(index)
+    }
+}
+
+impl<L: RouteList, H: ErrorHandler> Routes for Router<L, H> {
+    async fn dispatch<B: ReqBody>(&self, req: Request<B>) -> Response {
+        let (parts, body) = req.into_parts();
         let mut buf = ParamBuf::new();
 
-        for &candidate in self.index.candidates(first) {
-            let index = usize::from(candidate);
-            let pattern = self.routes.pattern(index);
-
-            if !pattern.matches(path, &mut buf) {
-                continue;
-            }
-
-            let params = PathParams::new(pattern.names(), buf.as_slice());
-
+        let Some(index) = self.lookup(parts.uri.path(), &mut buf) else {
             return self
-                .routes
-                .call(index, &parts, params, body, &self.handler, self.options)
+                .handler
+                .handle(HandlerError::new(Rejection::NotFound), &parts)
                 .await;
-        }
+        };
+        let params = PathParams::new(self.routes.pattern(index).names(), buf.as_slice());
 
-        self.handler
-            .handle(HandlerError::new(Rejection::NotFound), &parts)
+        self.routes
+            .call(index, &parts, params, body, &self.handler, self.options)
             .await
     }
 }

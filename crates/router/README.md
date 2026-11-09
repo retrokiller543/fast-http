@@ -15,7 +15,9 @@ let router = Router::new((
 
 Handlers are plain `async fn`s. Arguments are extractors (`Path<T>`, `Method`, `Uri`, `HeaderMap`, `Extension<T>`, and so on); the last one may consume the body (`Body<T>` from `fast-http-format`). Return anything that implements `IntoOutcome`, including `Result<_, E>` for any `E: ErrorResponse`.
 
-Patterns: `/users/{id}` captures one segment, `*` matches one segment without capturing, `**` matches the remaining segments, and `{**name}` captures them (read as `Segments` or via `PathParams::segments`).
+Patterns: `/users/{id}` captures one segment, `*` matches one segment without capturing, `**` matches the remaining segments, and `{**name}` captures them (read as the borrowed `Segments<'_>` or via `PathParams::segments`).
+
+Handlers are plain `async fn`s and may borrow from the request: `Path<(&str, u64)>`, `Path<Segments<'_>>`, `Path<BTreeMap<&str, &str>>`, `&Parts`, `&HeaderMap`, `&Method`, `&Uri` and `&Extensions` all extract without allocating.
 
 Run `cargo run -p fast-http-router --example users` for a mocked-request walkthrough.
 
