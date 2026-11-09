@@ -1,0 +1,17 @@
+/target
+/benchmarks/target
+/benchmarks/criterion
+debug/
+release/
+*.rs.bk
+*.rlib
+*.prof*
+.idea/
+*.log
+.env*
+!.env.example
+.DS_Store
+Thumbs.db
+*.tmp
+*.swp
+.vscode/
