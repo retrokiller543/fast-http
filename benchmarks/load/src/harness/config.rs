@@ -18,6 +18,7 @@ usage: load [options]
   --light-rate RPS      fixed request rate of the light profile (default: 1000)
   --medium-rate RPS     fixed request rate of the medium profile (default: 20000)
   --alloc-requests N    requests per allocation-counting pass (default: 10000)
+  --repeat N            runs of the whole matrix, rotating the framework order (default: 1)
   --output DIR          where result directories are written (default: results)";
 
 /// A finite choice named on the command line.
@@ -154,6 +155,8 @@ pub struct Config {
     pub medium_rate: u32,
     /// Requests per allocation-counting pass.
     pub alloc_requests: u32,
+    /// Times the whole matrix runs, each time starting with the next framework.
+    pub repeat: u32,
     /// Interval between RSS samples.
     pub sample: Duration,
     /// Directory the result directories are written to.
@@ -176,6 +179,7 @@ impl Default for Config {
             light_rate: 1_000,
             medium_rate: 20_000,
             alloc_requests: 10_000,
+            repeat: 1,
             sample: Duration::from_millis(100),
             output: PathBuf::from("results"),
         }
@@ -205,6 +209,12 @@ impl Config {
                 "--light-rate" => config.light_rate = number(&flag, &value)?,
                 "--medium-rate" => config.medium_rate = number(&flag, &value)?,
                 "--alloc-requests" => config.alloc_requests = number(&flag, &value)?,
+                "--repeat" => {
+                    config.repeat = number(&flag, &value)
+                        .ok()
+                        .filter(|repeat| *repeat > 0)
+                        .ok_or(ConfigError::InvalidValue { flag, value })?;
+                }
                 "--output" => config.output = PathBuf::from(value),
                 _ => return Err(ConfigError::UnknownFlag(flag)),
             }

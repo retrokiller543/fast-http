@@ -24,7 +24,7 @@ use super::{
 pub struct Report {
     /// Settings the run used.
     pub config: Config,
-    /// One entry per framework, in run order.
+    /// One entry per framework per repeat, in run order.
     pub frameworks: Vec<FrameworkReport>,
 }
 
@@ -33,6 +33,8 @@ pub struct Report {
 pub struct FrameworkReport {
     /// The framework.
     pub framework: Framework,
+    /// Zero-based repeat of the whole matrix this run belongs to.
+    pub repeat: u32,
     /// RSS while idle right after startup.
     pub idle: Option<Memory>,
     /// RSS while idle after all load phases.
@@ -126,7 +128,7 @@ pub fn write(report: &Report, output: &Path) -> Result<PathBuf, LoadError> {
 fn write_rss(report: &Report, path: &Path) -> Result<(), LoadError> {
     let mut csv = BufWriter::new(File::create(path)?);
 
-    writeln!(csv, "framework,phase,at_ms,rss_bytes,cpu_ms")?;
+    writeln!(csv, "framework,repeat,phase,at_ms,rss_bytes,cpu_ms")?;
 
     for framework in &report.frameworks {
         for sample in &framework.samples {
@@ -138,8 +140,9 @@ fn write_rss(report: &Report, path: &Path) -> Result<(), LoadError> {
 
             writeln!(
                 csv,
-                "{},{phase},{},{},{}",
+                "{},{},{phase},{},{},{}",
                 framework.framework.name(),
+                framework.repeat,
                 sample.at_ms,
                 sample.rss,
                 sample.cpu_ms
@@ -152,9 +155,74 @@ fn write_rss(report: &Report, path: &Path) -> Result<(), LoadError> {
     Ok(())
 }
 
-/// Markdown tables comparing the frameworks.
+/// Median and range of one measurement over the repeats.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct Spread {
+    /// Median value.
+    pub median: f64,
+    /// Smallest value.
+    pub min: f64,
+    /// Largest value.
+    pub max: f64,
+}
+
+fn spread(values: &mut [f64]) -> Option<Spread> {
+    values.sort_by(f64::total_cmp);
+
+    let (min, max) = (*values.first()?, *values.last()?);
+    let middle = values.len() / 2;
+    let median = if values.len().is_multiple_of(2) {
+        (values[middle - 1] + values[middle]) / 2.0
+    } else {
+        values[middle]
+    };
+
+    Some(Spread { median, min, max })
+}
+
+/// The runs of each framework across the repeats, in first-run order.
+fn by_framework(report: &Report) -> Vec<(Framework, Vec<&FrameworkReport>)> {
+    let mut groups: Vec<(Framework, Vec<&FrameworkReport>)> = Vec::new();
+
+    for run in &report.frameworks {
+        match groups
+            .iter_mut()
+            .find(|(framework, _)| *framework == run.framework)
+        {
+            Some((_, runs)) => runs.push(run),
+            None => groups.push((run.framework, vec![run])),
+        }
+    }
+
+    groups
+}
+
+/// A table cell: the median, with the range appended when `range` and there are several values.
+fn cell(mut values: Vec<f64>, precision: usize, range: bool) -> String {
+    let many = values.len() > 1;
+
+    match spread(&mut values) {
+        None => "-".to_owned(),
+        Some(s) if range && many => format!(
+            "{:.precision$} ({:.precision$}–{:.precision$})",
+            s.median, s.min, s.max
+        ),
+        Some(s) => format!("{:.precision$}", s.median),
+    }
+}
+
+fn mib_cell(mut values: Vec<f64>) -> String {
+    match spread(&mut values) {
+        Some(s) => format!("{:.1} MiB", s.median / (1024.0 * 1024.0)),
+        None => "-".to_owned(),
+    }
+}
+
+/// Markdown tables comparing the frameworks; repeats are summarised by their median.
 pub fn markdown(report: &Report) -> String {
     let mut out = String::new();
+    let groups = by_framework(report);
+    let ranges = report.config.repeat > 1;
 
     out.push_str("## Latency and throughput\n\n");
     row(
@@ -180,35 +248,42 @@ pub fn markdown(report: &Report) -> String {
 
     for &profile in &report.config.profiles {
         for &scenario in &report.config.scenarios {
-            for framework in &report.frameworks {
-                let Some(load) = framework
-                    .loads
+            for (framework, runs) in &groups {
+                let loads: Vec<&Measured> = runs
                     .iter()
-                    .find(|load| load.profile == profile && load.scenario == scenario)
-                else {
+                    .filter_map(|run| {
+                        run.loads
+                            .iter()
+                            .find(|load| load.profile == profile && load.scenario == scenario)
+                    })
+                    .collect();
+
+                if loads.is_empty() {
                     continue;
+                }
+
+                let all = |value: fn(&Measured) -> f64| loads.iter().map(|l| value(l)).collect();
+                let some = |value: fn(&Measured) -> Option<f64>| {
+                    loads.iter().filter_map(|l| value(l)).collect()
                 };
-                let outcome = &load.outcome;
 
                 row(
                     &mut out,
                     &[
                         profile.name(),
                         scenario.name(),
-                        framework.framework.name(),
-                        &format!("{:.0}", outcome.throughput),
-                        &load
-                            .cpu_us
-                            .map_or_else(|| "-".to_owned(), |us| format!("{us:.1}")),
-                        &millis(outcome.latency.p50),
-                        &millis(outcome.latency.p90),
-                        &millis(outcome.latency.p99),
-                        &millis(outcome.latency.p999),
-                        &outcome.unexpected.to_string(),
-                        &outcome.errors.to_string(),
-                        &outcome.aborted.to_string(),
-                        &load.memory.map_or_else(|| "-".to_owned(), |m| mib(m.mean)),
-                        &load.memory.map_or_else(|| "-".to_owned(), |m| mib(m.peak)),
+                        framework.name(),
+                        &cell(all(|l| l.outcome.throughput), 0, ranges),
+                        &cell(some(|l| l.cpu_us), 1, ranges),
+                        &cell(some(|l| l.outcome.latency.p50), 3, false),
+                        &cell(some(|l| l.outcome.latency.p90), 3, false),
+                        &cell(some(|l| l.outcome.latency.p99), 3, false),
+                        &cell(some(|l| l.outcome.latency.p999), 3, false),
+                        &cell(all(|l| l.outcome.unexpected as f64), 0, false),
+                        &cell(all(|l| l.outcome.errors as f64), 0, false),
+                        &cell(all(|l| l.outcome.aborted as f64), 0, false),
+                        &mib_cell(some(|l| l.memory.map(|m| m.mean as f64))),
+                        &mib_cell(some(|l| l.memory.map(|m| m.peak as f64))),
                     ],
                 );
             }
@@ -227,18 +302,20 @@ pub fn markdown(report: &Report) -> String {
     );
     separator(&mut out, 4);
 
-    for framework in &report.frameworks {
+    for (framework, runs) in &groups {
+        let idle = runs.iter().filter_map(|r| r.idle.map(|m| m.mean as f64));
+        let cooldown = runs
+            .iter()
+            .filter_map(|r| r.cooldown.map(|m| m.mean as f64));
+        let peak = runs.iter().map(|r| r.peak_rss as f64);
+
         row(
             &mut out,
             &[
-                framework.framework.name(),
-                &framework
-                    .idle
-                    .map_or_else(|| "-".to_owned(), |m| mib(m.mean)),
-                &framework
-                    .cooldown
-                    .map_or_else(|| "-".to_owned(), |m| mib(m.mean)),
-                &mib(framework.peak_rss),
+                framework.name(),
+                &mib_cell(idle.collect()),
+                &mib_cell(cooldown.collect()),
+                &mib_cell(peak.collect()),
             ],
         );
     }
@@ -248,22 +325,33 @@ pub fn markdown(report: &Report) -> String {
     separator(&mut out, 4);
 
     for &scenario in &report.config.scenarios {
-        for framework in &report.frameworks {
-            if let Some(allocs) = framework
-                .allocations
+        for (framework, runs) in &groups {
+            let counts: Vec<&Allocations> = runs
                 .iter()
-                .find(|allocs| allocs.scenario == scenario)
-            {
-                row(
-                    &mut out,
-                    &[
-                        scenario.name(),
-                        framework.framework.name(),
-                        &format!("{:.1}", allocs.allocs_per_request),
-                        &format!("{:.0}", allocs.bytes_per_request),
-                    ],
-                );
+                .filter_map(|run| run.allocations.iter().find(|a| a.scenario == scenario))
+                .collect();
+
+            if counts.is_empty() {
+                continue;
             }
+
+            row(
+                &mut out,
+                &[
+                    scenario.name(),
+                    framework.name(),
+                    &cell(
+                        counts.iter().map(|a| a.allocs_per_request).collect(),
+                        1,
+                        false,
+                    ),
+                    &cell(
+                        counts.iter().map(|a| a.bytes_per_request).collect(),
+                        0,
+                        false,
+                    ),
+                ],
+            );
         }
     }
 
@@ -286,10 +374,5 @@ fn separator(out: &mut String, columns: usize) {
     row(out, &vec!["---"; columns]);
 }
 
-fn millis(value: Option<f64>) -> String {
-    value.map_or_else(|| "-".to_owned(), |ms| format!("{ms:.3}"))
-}
-
-fn mib(bytes: u64) -> String {
-    format!("{:.1} MiB", bytes as f64 / (1024.0 * 1024.0))
-}
+#[cfg(test)]
+mod tests;

@@ -12,13 +12,16 @@ Needs `oha` on `PATH` (`cargo install oha`).
 just load                                                  # full run, several minutes
 just load --duration 2 --idle 2 --warmup 1 --profiles light # smoke run
 just load --frameworks fast-http,axum --scenarios json --workers 4
+just load --repeat 3                                       # three runs, rotated framework order
 ```
 
 `just load` builds the release binaries and writes `benchmarks/load/results/<unix time>/` (gitignored):
 
-- `summary.json`: the configuration and every measurement.
-- `summary.md`: latency/throughput (with `cpu µs/req`, the server's CPU time per response over the load window), memory and allocation tables (also printed).
-- `rss.csv`: `framework,phase,at_ms,rss_bytes,cpu_ms`, one row per memory sample, for plotting memory and accumulated server CPU time over time.
+- `summary.json`: the configuration and every measurement of every repeat, unaggregated.
+- `summary.md`: latency/throughput (with `cpu µs/req`, the server's CPU time per response over the load window), memory and allocation tables (also printed). With `--repeat N` every number is the median over the repeats, and `req/s` and `cpu µs/req` also show `(min–max)`. `cpu µs/req` is the primary metric: it is the CPU the server spends per response, so it barely depends on how busy `oha` and the machine are, unlike `req/s`.
+- `rss.csv`: `framework,repeat,phase,at_ms,rss_bytes,cpu_ms`, one row per memory sample, for plotting memory and accumulated server CPU time over time.
+
+`--repeat N` runs the whole matrix N times; repeat `i` starts with the `i`-th framework (rotated), so no framework always runs first or last and thermal or background drift averages out.
 
 Any unknown or malformed flag prints the full option list.
 

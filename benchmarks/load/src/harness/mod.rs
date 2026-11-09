@@ -62,13 +62,27 @@ pub enum LoadError {
     Io(#[from] io::Error),
 }
 
-/// Measures every configured framework, one after the other.
+/// The frameworks in the order repeat `repeat` runs them.
+pub fn rotated(frameworks: &[Framework], repeat: u32) -> Vec<Framework> {
+    let mut order = frameworks.to_vec();
+    let len = order.len();
+
+    if len > 0 {
+        order.rotate_left(repeat as usize % len);
+    }
+
+    order
+}
+
+/// Measures every configured framework, one after the other, for every repeat.
 pub fn run(config: &Config) -> Result<Report, LoadError> {
-    let frameworks = config
-        .frameworks
-        .iter()
-        .map(|framework| measure(config, *framework))
-        .collect::<Result<_, _>>()?;
+    let mut frameworks = Vec::new();
+
+    for repeat in 0..config.repeat {
+        for framework in rotated(&config.frameworks, repeat) {
+            frameworks.push(measure(config, framework, repeat)?);
+        }
+    }
 
     Ok(Report {
         config: config.clone(),
@@ -79,6 +93,7 @@ pub fn run(config: &Config) -> Result<Report, LoadError> {
 /// Phases recorded against the time the server became ready.
 struct Timeline {
     framework: Framework,
+    repeat: u32,
     origin: Instant,
     phases: Vec<Phase>,
 }
@@ -86,7 +101,11 @@ struct Timeline {
 impl Timeline {
     /// Runs `phase` and records when it started and ended.
     fn record<T>(&mut self, label: String, phase: impl FnOnce() -> T) -> (T, Phase) {
-        eprintln!("[{}] {label}", self.framework.name());
+        if self.repeat > 0 {
+            eprintln!("[{} #{}] {label}", self.framework.name(), self.repeat);
+        } else {
+            eprintln!("[{}] {label}", self.framework.name());
+        }
 
         let start_ms = self.elapsed_ms();
         let result = phase();
@@ -106,12 +125,17 @@ impl Timeline {
     }
 }
 
-fn measure(config: &Config, framework: Framework) -> Result<FrameworkReport, LoadError> {
+fn measure(
+    config: &Config,
+    framework: Framework,
+    repeat: u32,
+) -> Result<FrameworkReport, LoadError> {
     let server = ServerProcess::spawn(framework, config.workers)?;
     let origin = Instant::now();
     let sampler = Sampler::start(server.pid(), config.sample, origin)?;
     let mut timeline = Timeline {
         framework,
+        repeat,
         origin,
         phases: Vec::new(),
     };
@@ -141,6 +165,7 @@ fn measure(config: &Config, framework: Framework) -> Result<FrameworkReport, Loa
 
     Ok(FrameworkReport {
         framework,
+        repeat,
         idle: memory("idle"),
         cooldown: memory("cooldown"),
         peak_rss: samples.iter().map(|sample| sample.rss).max().unwrap_or(0),
@@ -221,3 +246,6 @@ fn measured(profile: Profile, scenario: Scenario, outcome: Outcome, phase: Phase
         cpu_us: None,
     }
 }
+
+#[cfg(test)]
+mod tests;

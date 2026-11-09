@@ -48,3 +48,11 @@ fn invalid_arguments_are_rejected() {
         ConfigError::UnknownFlag("--rps".to_owned())
     );
 }
+
+#[test]
+fn repeat_is_parsed_and_zero_is_rejected() {
+    let config = parse(&["--repeat", "3"]).expect("valid");
+
+    assert_eq!(config.repeat, 3);
+    assert!(parse(&["--repeat", "0"]).is_err());
+}
