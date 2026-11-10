@@ -11,10 +11,11 @@ pub mod media;
 pub mod rejection;
 pub mod response;
 pub mod routes;
+pub mod task;
 pub mod tuple;
 pub mod types;
 
-pub use body::{BoxError, ResponseBody, buffer};
+pub use body::{BoxError, DEFAULT_BODY_LIMIT, ResponseBody, buffer};
 pub use controller::Controller;
 pub use endpoint::{DispatchOptions, Endpoint, EndpointSet, Selection, dispatch_set};
 pub use error::{
@@ -30,5 +31,6 @@ pub use media::MediaType;
 pub use rejection::Rejection;
 pub use response::IntoResponse;
 pub use routes::Routes;
+pub use task::{Plain, Task, TaskSpawner, TaskWrap, WithSpawner, with_spawner};
 pub use tuple::TuplePush;
 pub use types::{ReqBody, Request, Response};

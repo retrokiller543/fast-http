@@ -1,7 +1,7 @@
 use std::{convert::Infallible, pin::pin, sync::Arc};
 
 use ::hyper::{body::Incoming, rt::Executor, service::service_fn};
-use fast_http_core::{Routes, with_peer};
+use fast_http_core::{Routes, TaskSpawner, with_peer, with_spawner};
 use fast_http_transport::{ConnInfo, Connection};
 use http_body_util::Limited;
 use hyper_util::{
@@ -31,6 +31,7 @@ pub struct HyperState<W> {
     builder: auto::Builder<Spawner<W>>,
     max_body_bytes: usize,
     peer_addr: bool,
+    spawner: TaskSpawner,
 }
 
 /// hyper executor that spawns HTTP/2 stream tasks on tokio, wrapped by `W`.
@@ -52,6 +53,13 @@ impl Engine for Hyper {
     type State<W: TaskWrap> = HyperState<W>;
 
     fn new<W: TaskWrap>(settings: &Settings, tasks: W) -> HyperState<W> {
+        let spawner = TaskSpawner::new({
+            let tasks = tasks.clone();
+
+            move |task| {
+                tokio::spawn(tasks.wrap(task));
+            }
+        });
         let mut builder = auto::Builder::new(Spawner(tasks));
 
         // half_close(true) skips hyper's mid-message EOF probe between keep-alive requests. That
@@ -76,6 +84,7 @@ impl Engine for Hyper {
             builder,
             max_body_bytes: settings.max_body_bytes,
             peer_addr: settings.peer_addr,
+            spawner,
         }
     }
 
@@ -88,13 +97,16 @@ impl Engine for Hyper {
     ) -> Result<(), EngineError> {
         let peer = info.peer.filter(|_| state.peer_addr);
         let max_body_bytes = state.max_body_bytes;
+        let spawner = state.spawner.clone();
         let service = service_fn(move |req: http::Request<Incoming>| {
             let routes = Arc::clone(&routes);
+            let spawner = spawner.clone();
 
             async move {
                 let req = req.map(|body| Limited::new(body, max_body_bytes));
+                let dispatch = with_spawner(Some(spawner), routes.dispatch(req));
 
-                Ok::<_, Infallible>(with_peer(peer, routes.dispatch(req)).await)
+                Ok::<_, Infallible>(with_peer(peer, dispatch).await)
             }
         });
         let mut conn = pin!(
