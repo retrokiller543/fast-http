@@ -1,5 +1,9 @@
 use std::{future::Future, marker::PhantomData};
 
+mod bound;
+
+pub use bound::{Bind, Bound, bind};
+
 use fast_http_core::{
     Endpoint, ErrorHandler, FromParams, FromRequest, HandlerError, IntoOutcome, PathParams,
     ReqBody, Response,
@@ -55,7 +59,7 @@ impl<T: FromRequest + Send> Extract<ViaBody> for T {
 
 /// Calls a function with arguments borrowed for `'r`, naming the returned future.
 ///
-/// Implemented for every `Fn` of up to six arguments. [`Handler`] requires it for all `'r`, which
+/// Implemented for every `Fn` of up to seven arguments. [`Handler`] requires it for all `'r`, which
 /// is what lets plain `async fn`s take borrowed extractors such as `&Parts` or `Path<&str>`.
 pub trait Call<'r, Args>: Send + Sync {
     /// Value the future resolves to.
@@ -90,6 +94,7 @@ call_impl!(T1 v1, T2 v2, T3 v3);
 call_impl!(T1 v1, T2 v2, T3 v3, T4 v4);
 call_impl!(T1 v1, T2 v2, T3 v3, T4 v4, T5 v5);
 call_impl!(T1 v1, T2 v2, T3 v3, T4 v4, T5 v5, T6 v6);
+call_impl!(T1 v1, T2 v2, T3 v3, T4 v4, T5 v5, T6 v6, T7 v7);
 
 /// An async function whose arguments are extractors and whose return value converts into a response.
 pub trait Handler<M>: Send + Sync + 'static {
