@@ -33,7 +33,7 @@ let router = Router::new().merge(Arc::new(chat).routes()?);
   - `not(..)`, `any(..)` and `all(..)` combine conditions.
   - `guard(Type)` runs a `HeadGuard` type.
 - A parameter that is absent matches no `= value` condition. Put an unguarded endpoint last for the default.
-- Compile errors: a variant after an unguarded one for the same method and path (unreachable), a repeated endpoint, a non-`async` or generic method, a receiver other than `&self`, and a malformed prefix or path. Body guards are not supported by `when`; implement `Endpoint` by hand.
+- Compile errors: a variant after an unguarded one for the same method and path (unreachable), a repeated endpoint, a non-`async` or generic method, a receiver other than `&self`, and a malformed prefix or path. Body guards are not supported by `when`; use a bare route with `FnEndpoint::body_guard` and merge it into the same router (see the `controller` example).
 
 ## Internal role
 

@@ -10,6 +10,9 @@
 //! - `ws` adds [`ws`] and `multipart` adds [`multipart`];
 //! - `macros` adds the [`controller`] attribute;
 //! - `full` turns all of them on.
+//!
+//! The `routes` example builds routes by hand and the `controller` example uses [`controller`];
+//! both show header and body guards.
 
 pub use fast_http_core as core;
 pub use fast_http_format as format;
