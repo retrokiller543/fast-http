@@ -10,7 +10,7 @@ pub trait ServerConfig: Send + Sync + 'static {
     /// HTTP/1 header count.
     const MAX_HEADERS: usize = 100;
     /// Request body bytes read from the wire, enforced while streaming.
-    const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
+    const MAX_BODY_BYTES: usize = fast_http_core::DEFAULT_BODY_LIMIT;
     /// Concurrent HTTP/2 streams per connection.
     const MAX_CONCURRENT_STREAMS: u32 = 128;
     /// Time allowed to establish a connection, including the TLS handshake.
@@ -80,3 +80,6 @@ impl Default for Settings {
         Self::of::<DefaultConfig>()
     }
 }
+
+#[cfg(test)]
+mod tests;

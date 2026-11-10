@@ -8,6 +8,10 @@ use bytes::Bytes;
 use http_body::{Body, Frame, SizeHint};
 use http_body_util::{BodyExt, LengthLimitError, Limited, combinators::UnsyncBoxBody};
 
+/// Default cap on a request body, 8 MiB: what the server reads from the wire, what body guards
+/// buffer and what the body extractors accept, unless one is configured otherwise.
+pub const DEFAULT_BODY_LIMIT: usize = 8 * 1024 * 1024;
+
 /// Boxed error used at the streaming boundary.
 pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
 

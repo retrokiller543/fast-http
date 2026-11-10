@@ -130,7 +130,7 @@ pub trait ServerConfig: 'static {
     type Http3: ProtocolSwitch;
 
     const MAX_HEADER_BYTES: usize = 16 * 1024;
-    const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
+    const MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
     const MAX_CONCURRENT_STREAMS: u32 = 128;
     const ALPN: &'static [&'static [u8]];
 }
