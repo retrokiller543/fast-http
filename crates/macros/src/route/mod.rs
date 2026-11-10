@@ -49,7 +49,7 @@ impl HttpMethod {
 pub struct RouteAttr {
     /// The method the attribute names.
     pub method: HttpMethod,
-    /// The path relative to the controller prefix.
+    /// The path relative to the controller prefix; empty when omitted.
     pub path: LitStr,
     /// Conditions on the request head, all of which must hold.
     pub when: Vec<Condition>,
@@ -88,16 +88,20 @@ impl RouteAttr {
 
     fn parse_args(method: HttpMethod, input: ParseStream) -> syn::Result<Self> {
         let path = if input.peek(LitStr) {
-            input.parse()?
+            let path = input.parse()?;
+
+            if !input.is_empty() {
+                input.parse::<Token![,]>()?;
+            }
+
+            path
         } else {
             LitStr::new("", Span::call_site())
         };
         let mut when = Vec::new();
         let mut when_text = String::new();
 
-        if input.peek(Token![,]) {
-            input.parse::<Token![,]>()?;
-
+        if !input.is_empty() {
             let keyword: Ident = input.parse()?;
 
             if keyword != "when" {

@@ -11,10 +11,10 @@ struct Chat { db: Arc<Db> }
 
 #[controller("/chat")]
 impl Chat {
-    #[post("", when(query.stream = true))]
+    #[post(when(query.stream = true))]
     async fn stream(&self, body: Body<ChatReq>) -> Sse<ChatChunks> { /* ... */ }
 
-    #[post("")]
+    #[post]
     async fn buffered(&self, body: Body<ChatReq>) -> Negotiated<ChatRes> { /* ... */ }
 
     #[get("/{id}")]
@@ -25,7 +25,7 @@ let router = Router::new().merge(Arc::new(chat).routes()?);
 ```
 
 - The optional argument is a path prefix; `crate = path` names the crate providing the facade modules `router` and `core` (default `::fast_http`).
-- `#[get]`, `#[post]`, `#[put]`, `#[patch]` and `#[delete]` mark a method as an endpoint. Several attributes on one method add several endpoints. Unmarked methods are left alone, other attributes are kept.
+- `#[get]`, `#[post]`, `#[put]`, `#[patch]` and `#[delete]` mark a method as an endpoint. The path is relative to the prefix and may be omitted, as in `#[post]` or `#[post(when(..))]`, for the prefix itself. Several attributes on one method add several endpoints. Unmarked methods are left alone, other attributes are kept.
 - A `&self` method is bound to the `Arc<Self>` that `routes` takes; a method without a receiver is used as it is. All other arguments are extractors, as for any handler. Methods must be `async fn` and non-generic.
 - Endpoints that share a path form one route, tried in declaration order. The generated `routes(self: Arc<Self>)` returns the router, or the `PatternError` of the first malformed pattern.
 - `when(..)` restricts an endpoint to requests whose head matches; several conditions in one `when` must all hold:

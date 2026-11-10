@@ -48,6 +48,30 @@ fn parse_when_collects_every_condition() {
 }
 
 #[test]
+fn parse_when_without_a_path_has_an_empty_path() {
+    let route = parse(parse_quote!(#[post(when(query.stream = true))])).expect("parses");
+
+    assert_eq!(route.path.value(), "");
+    assert_eq!(route.when.len(), 1);
+}
+
+#[test]
+fn parse_trailing_comma_after_the_path_is_accepted() {
+    let route = parse(parse_quote!(#[get("/a",)])).expect("parses");
+
+    assert_eq!(route.path.value(), "/a");
+}
+
+#[test]
+fn parse_unknown_argument_without_a_path_is_an_error() {
+    let error = parse(parse_quote!(#[get(other(1))]))
+        .map(drop)
+        .expect_err("error");
+
+    assert!(error.to_string().contains("expected `when(..)`"));
+}
+
+#[test]
 fn parse_unknown_trailing_argument_is_an_error() {
     let error = parse(parse_quote!(#[get("/a", other(1))]))
         .map(drop)

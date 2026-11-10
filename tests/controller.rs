@@ -27,17 +27,17 @@ impl HeadGuard for Admin {
 
 #[controller("/chat")]
 impl Chat {
-    #[post("", when(query.stream = true))]
+    #[post(when(query.stream = true))]
     async fn stream(&self) -> String {
         format!("{} stream", self.greeting)
     }
 
-    #[post("", when(query.stream = false))]
+    #[post(when(query.stream = false))]
     async fn buffered(&self) -> &'static str {
         "buffered"
     }
 
-    #[post("")]
+    #[post]
     async fn fallback(&self) -> &'static str {
         "default"
     }

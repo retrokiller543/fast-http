@@ -105,6 +105,37 @@ fn expand_groups_endpoints_sharing_a_path_into_one_route() {
 }
 
 #[test]
+fn expand_omitted_path_equals_an_empty_one() {
+    let omitted = expand(
+        quote!("/chat"),
+        quote! {
+            impl Api {
+                #[post]
+                async fn a(&self) -> String { String::new() }
+
+                #[get(when(query.x))]
+                async fn b(&self) -> String { String::new() }
+            }
+        },
+    );
+    let explicit = expand(
+        quote!("/chat"),
+        quote! {
+            impl Api {
+                #[post("")]
+                async fn a(&self) -> String { String::new() }
+
+                #[get("", when(query.x))]
+                async fn b(&self) -> String { String::new() }
+            }
+        },
+    );
+
+    assert_eq!(omitted, explicit);
+    assert!(omitted.contains("Route::new(\"/chat\")?"));
+}
+
+#[test]
 fn expand_one_method_with_two_attributes_adds_two_endpoints() {
     let out = expand(
         quote!(),

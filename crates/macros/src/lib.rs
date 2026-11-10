@@ -30,7 +30,7 @@ use proc_macro::TokenStream;
 /// - The optional argument is a path prefix. `crate = path` names the crate that provides the
 ///   facade modules `router` and `core`; it defaults to `::fast_http`.
 /// - A method marked `#[get]`, `#[post]`, `#[put]`, `#[patch]` or `#[delete]` becomes an
-///   endpoint; several attributes on one method add several endpoints. Unmarked methods are left
+///   endpoint at the given path, or at the prefix itself when the path is omitted; several attributes on one method add several endpoints. Unmarked methods are left
 ///   alone.
 /// - A `&self` method is bound to the `Arc<Self>` that `routes` takes. A method without a
 ///   receiver is used as it is. Every other argument is an extractor.
