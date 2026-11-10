@@ -16,6 +16,13 @@ const MIN_H1_BUFFER: usize = 8 * 1024;
 
 /// hyper-based engine serving HTTP/1.1 and HTTP/2 on every connection. Cleartext HTTP/2 is
 /// detected through its prior-knowledge preface; over TLS the client's ALPN choice decides.
+///
+/// HTTP/1 runs with `half_close` enabled so hyper reuses its read buffer across keep-alive
+/// requests (otherwise it reallocates ~8 KiB per request). The tradeoff: a handler future is no
+/// longer cancelled early when the client fully closes or resets mid-request — the disconnect
+/// surfaces only at the next write or next head read. This wastes work on abandoned requests and
+/// delays disconnect detection for long-poll, SSE and streaming handlers; it adds no exhaustion
+/// vector, since idle and half-open connections stay bounded by the header-read timeout.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Hyper;
 
@@ -49,7 +56,8 @@ impl Engine for Hyper {
 
         // half_close(true) skips hyper's mid-message EOF probe between keep-alive requests. That
         // probe reads while the just-parsed request head is still shared with the read buffer, so
-        // BytesMut::reserve cannot reclaim it and allocates a fresh 8 KiB per request.
+        // BytesMut::reserve cannot reclaim it and allocates a fresh 8 KiB per request. Tradeoff:
+        // the handler is no longer cancelled early on a client full close/RST (see `Hyper` docs).
         builder
             .http1()
             .timer(TokioTimer::new())
