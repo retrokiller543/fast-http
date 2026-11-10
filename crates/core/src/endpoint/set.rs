@@ -142,7 +142,7 @@ macro_rules! endpoint_set {
                 handler: &'r Eh,
             ) -> impl Future<Output = Response> + Send + use<'r, Bd, Eh, $($endpoint),+> {
                 match index {
-                    $($index => $future::$endpoint(self.$index.call(parts, params, body, handler)),)+
+                    $($index => $future::$endpoint { fut: self.$index.call(parts, params, body, handler) },)+
                     _ => unreachable!("index comes from `EndpointSet::select`"),
                 }
             }
