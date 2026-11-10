@@ -1,14 +1,25 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+//! fast-http behind one dependency: static routing, guards, flows, a hyper-based server and
+//! opt-in WebSocket and multipart support, selected with Cargo features.
+//!
+//! Each workspace crate is re-exported as a module. Features:
+//!
+//! - format features (`json` by default, `form`, `yaml`, `toml`, `cbor`, `msgpack`, `xml`,
+//!   `problem`) choose the data formats of [`format`];
+//! - `tower` adds [`layer::TowerFlow`];
+//! - `tls` adds rustls support to the [`server`] transports;
+//! - `ws` adds [`ws`] and `multipart` adds [`multipart`];
+//! - `full` turns all of them on.
+
+pub use fast_http_core as core;
+pub use fast_http_format as format;
+pub use fast_http_layer as layer;
+#[cfg(feature = "multipart")]
+pub use fast_http_multipart as multipart;
+pub use fast_http_router as router;
+pub use fast_http_server as server;
+pub use fast_http_transport as transport;
+#[cfg(feature = "ws")]
+pub use fast_http_ws as ws;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+mod tests;

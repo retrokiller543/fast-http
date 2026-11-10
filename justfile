@@ -18,7 +18,7 @@ check:
 
 # Each library crate alone, so a feature hidden by workspace feature unification shows up.
 check-isolated:
-    for crate in core format layer router server transport; do cargo check -p "fast-http-$crate" --all-targets; done
+    for crate in core format layer multipart router server transport ws; do cargo check -p "fast-http-$crate" --all-targets; done
 
 # Same invocation as CI: zero warnings allowed.
 clippy:
