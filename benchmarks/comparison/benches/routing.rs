@@ -2,9 +2,9 @@
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use fast_http_bench::routing::{self, LOOKUPS};
-use fast_http_bench_support::{Budget, bench};
+use fast_http_bench_support::{Budget, Measurement, bench, criterion};
 
-fn lookups(c: &mut Criterion) {
+fn lookups(c: &mut Criterion<Measurement>) {
     let fast_http = routing::fast_http();
     let matchit = routing::matchit();
     let actix = routing::actix();
@@ -59,5 +59,9 @@ fn lookups(c: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, lookups);
+criterion_group! {
+    name = benches;
+    config = criterion();
+    targets = lookups
+}
 criterion_main!(benches);

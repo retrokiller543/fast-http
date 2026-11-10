@@ -2,11 +2,11 @@
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use fast_http_bench::{apps, cases::CASES};
-use fast_http_bench_support::{Budget, bench, ready};
+use fast_http_bench_support::{Budget, Measurement, bench, criterion, ready};
 use fast_http_core::Routes;
 use tower::ServiceExt;
 
-fn stack(c: &mut Criterion) {
+fn stack(c: &mut Criterion<Measurement>) {
     let fast_http = apps::fast_http();
     let axum = apps::axum();
 
@@ -38,5 +38,9 @@ fn stack(c: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, stack);
+criterion_group! {
+    name = benches;
+    config = criterion();
+    targets = stack
+}
 criterion_main!(benches);

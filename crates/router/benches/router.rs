@@ -2,7 +2,7 @@
 
 use bytes::Bytes;
 use criterion::{Criterion, criterion_group, criterion_main};
-use fast_http_bench_support::{Budget, bench, ready};
+use fast_http_bench_support::{Budget, Measurement, bench, criterion, ready};
 use fast_http_core::{Path, Routes, Segments};
 use fast_http_router::{ParamBuf, Pattern, Route, Router};
 use http::{Method, Request};
@@ -42,7 +42,7 @@ fn request(method: Method, uri: &'static str) -> Request<Full<Bytes>> {
         .expect("valid request")
 }
 
-fn patterns(c: &mut Criterion) {
+fn patterns(c: &mut Criterion<Measurement>) {
     let literal = Pattern::parse("/api/v1/health").expect("valid pattern");
     let params = Pattern::parse("/api/v1/orgs/{org}/repos/{repo}").expect("valid pattern");
     let rest = Pattern::parse("/static/{**path}").expect("valid pattern");
@@ -85,7 +85,7 @@ fn patterns(c: &mut Criterion) {
     );
 }
 
-fn dispatch(c: &mut Criterion) {
+fn dispatch(c: &mut Criterion<Measurement>) {
     let router = Router::new()
         .route(Route::new("/health").expect("valid pattern").get(health))
         .route(Route::new("/users/{id}").expect("valid pattern").get(user))
@@ -162,5 +162,9 @@ fn dispatch(c: &mut Criterion) {
     );
 }
 
-criterion_group!(benches, patterns, dispatch);
+criterion_group! {
+    name = benches;
+    config = criterion();
+    targets = patterns, dispatch
+}
 criterion_main!(benches);

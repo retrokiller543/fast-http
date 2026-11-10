@@ -38,7 +38,8 @@ quick-xml = { version = "0.42.0", features = ["serialize"] }
 toml = "1.2.1"
 futures-core = "0.3.34"
 criterion = "0.8.2"
-allocation-counter = "0.8.1"
+bench_metrics = { package = "mhr-bench-metrics", version = "0.1" }
+darwin-kperf-criterion = "0.1"
 tower = { version = "0.5.3", features = ["util"] }
 tower-layer = "0.3.3"
 tower-service = "0.3.3"

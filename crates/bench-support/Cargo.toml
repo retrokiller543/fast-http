@@ -10,5 +10,6 @@ categories.workspace = true
 publish = false
 
 [dependencies]
-allocation-counter.workspace = true
+bench_metrics.workspace = true
+darwin-kperf-criterion.workspace = true
 criterion.workspace = true

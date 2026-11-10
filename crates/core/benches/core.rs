@@ -2,7 +2,7 @@
 
 use bytes::Bytes;
 use criterion::{Criterion, criterion_group, criterion_main};
-use fast_http_bench_support::{Budget, bench, ready};
+use fast_http_bench_support::{Budget, Measurement, bench, criterion, ready};
 use fast_http_core::{
     DefaultErrorHandler, DispatchOptions, Endpoint, ErrorHandler, GuardPhase, HandlerError,
     MediaType, PathParams, Rejection, ReqBody, Response, ResponseBody, buffer, dispatch_set,
@@ -67,7 +67,7 @@ fn request(method: Method, body: &'static [u8]) -> Request<Full<Bytes>> {
         .expect("valid request")
 }
 
-fn media(c: &mut Criterion) {
+fn media(c: &mut Criterion<Measurement>) {
     bench(
         c,
         "media",
@@ -90,7 +90,7 @@ fn media(c: &mut Criterion) {
     );
 }
 
-fn selection(c: &mut Criterion) {
+fn selection(c: &mut Criterion<Measurement>) {
     let options = DispatchOptions::default();
     let one = (fixed(true),);
     let eight = (
@@ -163,7 +163,7 @@ fn selection(c: &mut Criterion) {
     );
 }
 
-fn body(c: &mut Criterion) {
+fn body(c: &mut Criterion<Measurement>) {
     let guarded = (Fixed {
         method: Method::POST,
         head_ok: true,
@@ -200,7 +200,7 @@ fn body(c: &mut Criterion) {
     );
 }
 
-fn errors(c: &mut Criterion) {
+fn errors(c: &mut Criterion<Measurement>) {
     bench(
         c,
         "error",
@@ -216,5 +216,9 @@ fn errors(c: &mut Criterion) {
     );
 }
 
-criterion_group!(benches, media, selection, body, errors);
+criterion_group! {
+    name = benches;
+    config = criterion();
+    targets = media, selection, body, errors
+}
 criterion_main!(benches);

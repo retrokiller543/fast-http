@@ -2,7 +2,7 @@
 //! `Negotiated` and `Body` extractors that wrap them.
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use fast_http_bench_support::{Budget, bench, ready};
+use fast_http_bench_support::{Budget, Measurement, bench, criterion, ready};
 use fast_http_core::{FromRequest, IntoOutcome};
 use fast_http_format::{Body, Decode, Encode, Negotiated, formats::Json};
 use http::{Request, header, request::Parts};
@@ -64,7 +64,7 @@ fn head(media: &str) -> Parts {
         .0
 }
 
-fn codec<F: Encode<Order> + Decode<Order>>(c: &mut Criterion, label: &str) {
+fn codec<F: Encode<Order> + Decode<Order>>(c: &mut Criterion<Measurement>, label: &str) {
     let media = F::MEDIA_TYPE.essence();
 
     for (size, lines) in SIZES {
@@ -99,7 +99,7 @@ fn codec<F: Encode<Order> + Decode<Order>>(c: &mut Criterion, label: &str) {
     }
 }
 
-fn extractors<F: Encode<Order> + Decode<Order>>(c: &mut Criterion, label: &str) {
+fn extractors<F: Encode<Order> + Decode<Order>>(c: &mut Criterion<Measurement>, label: &str) {
     let media = F::MEDIA_TYPE.essence();
 
     for (size, lines) in SIZES {
@@ -126,7 +126,7 @@ fn extractors<F: Encode<Order> + Decode<Order>>(c: &mut Criterion, label: &str) 
     }
 }
 
-fn formats(c: &mut Criterion) {
+fn formats(c: &mut Criterion<Measurement>) {
     codec::<Json>(c, "json");
     extractors::<Json>(c, "json");
 
@@ -149,5 +149,9 @@ fn formats(c: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, formats);
+criterion_group! {
+    name = benches;
+    config = criterion();
+    targets = formats
+}
 criterion_main!(benches);
