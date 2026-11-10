@@ -47,9 +47,13 @@ impl Engine for Hyper {
     fn new<W: TaskWrap>(settings: &Settings, tasks: W) -> HyperState<W> {
         let mut builder = auto::Builder::new(Spawner(tasks));
 
+        // half_close(true) skips hyper's mid-message EOF probe between keep-alive requests. That
+        // probe reads while the just-parsed request head is still shared with the read buffer, so
+        // BytesMut::reserve cannot reclaim it and allocates a fresh 8 KiB per request.
         builder
             .http1()
             .timer(TokioTimer::new())
+            .half_close(true)
             .header_read_timeout(settings.header_read_timeout)
             .max_buf_size(settings.max_header_bytes.max(MIN_H1_BUFFER))
             .max_headers(settings.max_headers);

@@ -102,6 +102,8 @@ fn engine(c: &mut Criterion<Measurement>) {
         .expect("runtime");
     let mut client = connect(&runtime);
 
+    runtime.block_on(client.round_trip(CASES[0].1));
+
     for (name, request) in CASES {
         let total = measure(
             || (),
@@ -113,11 +115,15 @@ fn engine(c: &mut Criterion<Measurement>) {
                 })
             },
         );
+        let count = total.count as f64 / REQUESTS as f64;
+        let bytes = total.bytes as f64 / REQUESTS as f64;
 
+        assert!(
+            bytes < 4096.0,
+            "engine/h1/{name} reallocated the read buffer: {bytes} bytes/request"
+        );
         println!(
-            "alloc engine/h1/{name} (per request, mean of {REQUESTS}): count={} bytes={}",
-            total.count / REQUESTS,
-            total.bytes / REQUESTS
+            "alloc engine/h1/{name} (per request, mean of {REQUESTS}): count={count} bytes={bytes}"
         );
         bench(
             c,

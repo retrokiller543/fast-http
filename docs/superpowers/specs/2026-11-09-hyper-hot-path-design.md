@@ -51,6 +51,17 @@ Each option is measured with the harness, not assumed:
 ## Findings
 
 - `Segments` already borrows from the path (done before this spec), so it is not part of the fixes.
+- The ~8 KiB per keep-alive request came from hyper's mid-message EOF probe, not from reading the
+  next request head. After writing each response hyper calls `poll_read_keep_alive` →
+  `mid_message_detect_eof` → `force_io_read` → `poll_read_from_io` (`hyper-1.12.0/src/proto/h1/io.rs:242`),
+  which `BytesMut::reserve`s 8 KiB. At that point the just-parsed head (`role.rs:222`
+  `split_to(len).freeze()`) is still shared with the read buffer, so `Shared::is_unique()` is false
+  (`bytes-1.12.1/src/bytes_mut.rs:705`) and `reserve` allocates a fresh buffer instead of reclaiming.
+  Enabling `http1().half_close(true)` makes `mid_message_detect_eof` return `Poll::Pending` before the
+  probe read, eliminating the allocation. Engine bench (in-memory, 1000 keep-alive requests): plaintext
+  5 allocs / 8452 B → 3 allocs / 220 B; json 7 allocs / 9152 B → 5 allocs / 920 B. The auto builder's
+  `Rewind` prefix buffer was ruled out (it wraps the IO once per connection, not per request), as was
+  `max_buf_size` (the probe reserves the configured max regardless).
 
 ## Testing
 
