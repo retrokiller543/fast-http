@@ -16,9 +16,7 @@ fn main() -> Result<(), ServeError> {
         let server = Server::bind(&Tcp::new(), BIND).await?;
 
         serve::announce(server.local_addr()?, control)?;
-        server
-            .serve(apps::fast_http(), std::future::pending())
-            .await;
+        server.serve(apps::fast_http()).await;
 
         Ok(())
     })

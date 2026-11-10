@@ -1,4 +1,11 @@
-use std::{io, marker::PhantomData, pin::pin, sync::Arc, time::Duration};
+use std::{
+    future::{Pending, pending},
+    io,
+    marker::PhantomData,
+    pin::pin,
+    sync::Arc,
+    time::Duration,
+};
 
 use fast_http_core::Routes;
 use fast_http_transport::{Accepted, Connection, Listener, Transport};
@@ -15,11 +22,12 @@ use crate::{Engine, Hyper, Plain, ServerConfig, Settings, Shutdown, TRACE_TARGET
 const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
 
 /// Accept loop that runs every connection on its own task through engine `E`, with every
-/// spawned task wrapped by `W`.
-pub struct Server<L, E = Hyper, W = Plain> {
+/// spawned task wrapped by `W`, until the shutdown signal `S` resolves.
+pub struct Server<L, E = Hyper, W = Plain, S = Pending<()>> {
     listener: L,
     settings: Settings,
     tasks: W,
+    signal: S,
     engine: PhantomData<fn() -> E>,
 }
 
@@ -38,12 +46,13 @@ impl<L: Listener> Server<L> {
             listener,
             settings: Settings::default(),
             tasks: Plain,
+            signal: pending(),
             engine: PhantomData,
         }
     }
 }
 
-impl<L: Listener, E: Engine, W: TaskWrap> Server<L, E, W> {
+impl<L: Listener, E: Engine, W: TaskWrap, S: Future<Output = ()> + Send> Server<L, E, W, S> {
     /// Replaces the settings with the preset `C`.
     pub fn config<C: ServerConfig>(mut self) -> Self {
         self.settings = Settings::of::<C>();
@@ -57,22 +66,24 @@ impl<L: Listener, E: Engine, W: TaskWrap> Server<L, E, W> {
     }
 
     /// Swaps the protocol engine.
-    pub fn engine<F: Engine>(self) -> Server<L, F, W> {
+    pub fn engine<F: Engine>(self) -> Server<L, F, W, S> {
         Server {
             listener: self.listener,
             settings: self.settings,
             tasks: self.tasks,
+            signal: self.signal,
             engine: PhantomData,
         }
     }
 
     /// Wraps every task the server spawns, connection and HTTP/2 stream tasks alike, with
     /// `tasks`, so the embedding framework's context reaches handlers.
-    pub fn task_wrap<V: TaskWrap>(self, tasks: V) -> Server<L, E, V> {
+    pub fn task_wrap<V: TaskWrap>(self, tasks: V) -> Server<L, E, V, S> {
         Server {
             listener: self.listener,
             settings: self.settings,
             tasks,
+            signal: self.signal,
             engine: PhantomData,
         }
     }
@@ -82,13 +93,25 @@ impl<L: Listener, E: Engine, W: TaskWrap> Server<L, E, W> {
         self.listener.local_addr()
     }
 
-    /// Serves `routes` until `shutdown` resolves, then stops accepting, lets in-flight requests
-    /// finish within the drain timeout and aborts the rest.
-    pub async fn serve<R: Routes>(self, routes: R, shutdown: impl Future<Output = ()> + Send) {
+    /// Stops accepting once `signal` resolves, lets in-flight requests finish within the drain
+    /// timeout and aborts the rest. Without it, `serve` runs until the process ends.
+    pub fn graceful_shutdown<T: Future<Output = ()> + Send>(self, signal: T) -> Server<L, E, W, T> {
+        Server {
+            listener: self.listener,
+            settings: self.settings,
+            tasks: self.tasks,
+            signal,
+            engine: PhantomData,
+        }
+    }
+
+    /// Serves `routes` until the shutdown signal resolves, if one was set.
+    pub async fn serve<R: Routes>(self, routes: R) {
         let Self {
             mut listener,
             settings,
             tasks,
+            signal: shutdown,
             ..
         } = self;
         let engine = Arc::new(E::new(&settings, tasks.clone()));

@@ -91,7 +91,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("listening on http://{}", server.local_addr()?);
 
     server
-        .serve(routes, async {
+        .graceful_shutdown(async {
             if let Err(error) = tokio::signal::ctrl_c().await {
                 eprintln!("no Ctrl-C handler ({error}); stop the process to exit");
 
@@ -100,6 +100,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             println!("draining");
         })
+        .serve(routes)
         .await;
 
     Ok(())

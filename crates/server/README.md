@@ -13,13 +13,16 @@ let server = Server::bind(&Tcp::new(), "127.0.0.1:3000".parse()?)
     .config::<MyPreset>()
     .settings(|s| s.drain_timeout = Duration::from_secs(5));
 
-server.serve(routes, async { tokio::signal::ctrl_c().await.ok(); }).await;
+server.serve(routes).await;
+
+// Optionally stop on a signal instead of running until the process ends:
+// server.graceful_shutdown(async { tokio::signal::ctrl_c().await.ok(); }).serve(routes).await;
 ```
 
 - Limits come from a `ServerConfig` preset (associated consts, `DefaultConfig` by default). The server copies them into `Settings`, which you can override at runtime.
 - The server owns the routes, shared between connection tasks through one `Arc`.
 - Plain TCP is the expected setup behind a TLS-terminating proxy. For direct exposure, wrap the transport in `Tls` (the `tls` feature).
-- On shutdown the server stops accepting, the engine finishes in-flight requests (h2 GOAWAY, h1 `Connection: close`), and connections still open after `drain_timeout` are aborted.
+- Graceful shutdown is optional (`.graceful_shutdown(signal)`). On shutdown the server stops accepting, the engine finishes in-flight requests (h2 GOAWAY, h1 `Connection: close`), and connections still open after `drain_timeout` are aborted.
 - `.task_wrap(w)` wraps every task the server spawns (connection tasks and HTTP/2 stream tasks) with a `TaskWrap`, so an embedding framework can carry its context, such as Upwell's DI context or a tracing span, into handlers. The default `Plain` spawns tasks unchanged.
 - `just serve` runs `examples/hello.rs`: plain HTTP/1.1 and h2c on 127.0.0.1:3000.
 

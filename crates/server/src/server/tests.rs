@@ -14,6 +14,22 @@ use crate::testing::{
 };
 
 #[tokio::test]
+async fn serves_without_a_shutdown_signal() {
+    let (memory, connector) = Memory::new(64 * 1024);
+    let server = Server::bind(&memory, ()).await.expect("bind");
+    let task = tokio::spawn(server.serve(crate::testing::routes()));
+    let mut client = h1(connector.connect().await.expect("connect")).await;
+    let response = client
+        .send_request(get_request("/hello"))
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    task.abort();
+}
+
+#[tokio::test]
 async fn http1_request_reaches_handler() {
     let (connector, server) = start(|_| {}).await;
     let mut client = h1(connector.connect().await.expect("connect")).await;

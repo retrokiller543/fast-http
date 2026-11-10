@@ -125,9 +125,13 @@ impl Running {
 /// Serves the test routes; a dropped stop sender also shuts the server down.
 pub fn spawn<L: Listener, W: TaskWrap>(server: Server<L, Hyper, W>) -> Running {
     let (stop, stopped) = oneshot::channel::<()>();
-    let task = tokio::spawn(server.serve(routes(), async {
-        let _ = stopped.await;
-    }));
+    let task = tokio::spawn(
+        server
+            .graceful_shutdown(async {
+                let _ = stopped.await;
+            })
+            .serve(routes()),
+    );
 
     Running { stop, task }
 }
