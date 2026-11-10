@@ -316,6 +316,8 @@ dependencies = [
  "fast-http-ws",
  "http",
  "http-body-util",
+ "serde",
+ "serde_json",
  "tokio",
 ]
 

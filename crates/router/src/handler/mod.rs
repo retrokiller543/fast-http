@@ -4,9 +4,10 @@ mod bound;
 
 pub use bound::{Bind, Bound, bind};
 
+use bytes::Bytes;
 use fast_http_core::{
-    Endpoint, ErrorHandler, FromParams, FromRequest, HandlerError, IntoOutcome, PathParams,
-    ReqBody, Response,
+    Endpoint, ErrorHandler, FromParams, FromRequest, GuardPhase, HandlerError, IntoOutcome,
+    PathParams, ReqBody, Response,
 };
 use http::{Method, request::Parts};
 
@@ -176,11 +177,12 @@ handler_impl!([T1 v1, T2 v2, T3 v3] T4 v4);
 handler_impl!([T1 v1, T2 v2, T3 v3, T4 v4] T5 v5);
 handler_impl!([T1 v1, T2 v2, T3 v3, T4 v4, T5 v5] T6 v6);
 
-/// A [`Handler`] bound to a method and an optional head guard, usable as an [`Endpoint`].
+/// A [`Handler`] bound to a method and optional head and body guards, usable as an [`Endpoint`].
 pub struct FnEndpoint<F, M> {
     method: Method,
     handler: F,
     guard: Option<fn(&Parts) -> bool>,
+    body_guard: Option<fn(&Parts, &Bytes) -> bool>,
     marker: PhantomData<fn() -> M>,
 }
 
@@ -191,6 +193,7 @@ impl<F, M> FnEndpoint<F, M> {
             method,
             handler,
             guard: None,
+            body_guard: None,
             marker: PhantomData,
         }
     }
@@ -201,6 +204,17 @@ impl<F, M> FnEndpoint<F, M> {
 
         self
     }
+
+    /// Only selects this endpoint when `guard` accepts the request head and the buffered body.
+    ///
+    /// The server buffers the body once, up to the dispatch body limit, and hands the handler
+    /// the same bytes as its body. The head guard runs first and a request it rejects never
+    /// causes buffering for this endpoint.
+    pub fn body_guard(mut self, guard: fn(&Parts, &Bytes) -> bool) -> Self {
+        self.body_guard = Some(guard);
+
+        self
+    }
 }
 
 impl<F: Handler<M>, M: 'static> Endpoint for FnEndpoint<F, M> {
@@ -208,8 +222,20 @@ impl<F: Handler<M>, M: 'static> Endpoint for FnEndpoint<F, M> {
         &self.method
     }
 
+    fn phase(&self) -> GuardPhase {
+        if self.body_guard.is_some() {
+            return GuardPhase::Body;
+        }
+
+        GuardPhase::Head
+    }
+
     fn head_guard(&self, parts: &Parts) -> bool {
         self.guard.is_none_or(|guard| guard(parts))
+    }
+
+    fn body_guard(&self, parts: &Parts, body: &Bytes) -> bool {
+        self.body_guard.is_none_or(|guard| guard(parts, body))
     }
 
     fn call<'r, B: ReqBody, H: ErrorHandler>(
@@ -222,6 +248,9 @@ impl<F: Handler<M>, M: 'static> Endpoint for FnEndpoint<F, M> {
         self.handler.call(parts, params, body, handler)
     }
 }
+
+#[cfg(test)]
+mod tests;
 
 macro_rules! method_fn {
     ($($name:ident => $method:ident),+) => {

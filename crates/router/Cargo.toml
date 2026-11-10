@@ -9,6 +9,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+bytes.workspace = true
 fast-http-core.workspace = true
 http.workspace = true
 thiserror.workspace = true
@@ -18,7 +19,6 @@ criterion.workspace = true
 fast-http-bench-support.workspace = true
 fast-http-format = { workspace = true, features = ["json"] }
 serde.workspace = true
-bytes.workspace = true
 http-body-util.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 
