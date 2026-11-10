@@ -18,7 +18,7 @@ criterion_group! { name = benches; config = criterion(); targets = cases }
 criterion_main!(benches);
 ```
 
-- `criterion()`: wall time (analysed by Criterion) plus allocation count and allocated bytes per iteration, printed to stderr after each case. `FAST_HTTP_COUNTERS=1` adds CPU counters: instructions, cycles and an `IPC` ratio on Linux (`perf_event_paranoid <= 2`); instructions on macOS through `darwin-kperf` (needs root; `FAST_HTTP_COUNTERS=cycles` selects cycles, only one counter fits per process). If the counters cannot be opened the bench exits non-zero. Use `just bench-instructions`.
+- `criterion()`: wall time (analysed by Criterion) plus allocation count and allocated bytes per iteration, printed to stderr after each case. `FAST_HTTP_COUNTERS=1` adds instructions, cycles and an `IPC` ratio, with no root: Linux needs `perf_event_paranoid <= 2`, Apple Silicon macOS works as is. If the counters cannot be opened (Intel Mac, VM) the bench exits non-zero with one line on stderr. Use `just bench-counters`.
 - `bench(...)`: prints `alloc group/name: count=… bytes=…`, enforces the `Budget`, then times the routine.
 - `measure(setup, routine)`: the `Allocations { count, bytes }` of one routine call.
 - `ready(future)`: polls a future that must complete without suspending.

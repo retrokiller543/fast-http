@@ -2,12 +2,12 @@
 //!
 //! Every bench reports wall time (the metric Criterion analyses) next to the heap allocation count
 //! and allocated bytes per iteration. Opting in with `FAST_HTTP_COUNTERS=1` adds CPU hardware
-//! counters: instructions and cycles (plus an `IPC` ratio) on Linux through `perf_event_open`, and
-//! instructions on macOS through `darwin-kperf` (`FAST_HTTP_COUNTERS=cycles` selects cycles
-//! instead; that crate allows one counter per process). Instruction counts are nearly
-//! deterministic, so they are the metric to compare optimisations on. Linux needs
-//! `perf_event_paranoid <= 2`, macOS needs root; `just bench-instructions` takes care of that.
-//! A requested counter that cannot be opened prints one line to stderr and exits non-zero.
+//! counters: instructions, cycles and an `IPC` ratio. They need no root: Linux uses
+//! `perf_event_open` (`perf_event_paranoid <= 2`), Apple Silicon macOS reads the kernel's per-process
+//! counters. Instruction counts are nearly deterministic, so they are the metric to compare
+//! optimisations on. Where the counters cannot be opened (Intel Macs, VMs, a denied
+//! `perf_event_open`) the bench prints one line to stderr and exits non-zero. `just bench-counters`
+//! runs the benches this way.
 //!
 //! Linking this crate installs [`bench_metrics::CountingAllocator`] as the global allocator. Its
 //! totals are **process-wide**: [`measure`] and the per-iteration allocation metrics include every
@@ -33,8 +33,8 @@ use std::{
 };
 
 use bench_metrics::{
-    AllocationCounter, AllocationMetric, BenchMeasurement, CountingAllocator, MetricReport,
-    MetricScope,
+    AllocationCounter, AllocationMetric, BenchMeasurement, CountingAllocator, HardwareCounter,
+    HardwareEvent, MetricReport, MetricScope,
 };
 use criterion::{BatchSize, Criterion, measurement::WallTime};
 
@@ -96,60 +96,20 @@ fn counters_unavailable(reason: impl std::fmt::Display) -> ! {
     process::exit(2)
 }
 
-#[cfg(target_os = "linux")]
 fn secondary_counters(measurement: BenchMeasurement) -> BenchMeasurement {
-    use bench_metrics::{HardwareCounter, HardwareEvent};
-
     if counters_request().is_none() {
         return measurement;
     }
 
     let open = |event| {
-        HardwareCounter::new(event, MetricScope::Process).unwrap_or_else(|error| {
-            counters_unavailable(format_args!("{error:#} (perf_event_paranoid must be <= 2)"))
-        })
+        HardwareCounter::new(event, MetricScope::Process)
+            .unwrap_or_else(|error| counters_unavailable(format_args!("{error:#}")))
     };
 
     measurement
         .with_secondary("instructions", open(HardwareEvent::Instructions))
         .with_secondary("cycles", open(HardwareEvent::Cycles))
         .with_ratio("IPC", "instructions", "cycles")
-}
-
-#[cfg(target_os = "macos")]
-fn secondary_counters(measurement: BenchMeasurement) -> BenchMeasurement {
-    use darwin_kperf_criterion::HardwareCounter;
-
-    let Some(request) = counters_request() else {
-        return measurement;
-    };
-
-    if request == "cycles" {
-        let cycles = HardwareCounter::cycles().unwrap_or_else(|error| {
-            counters_unavailable(format_args!(
-                "{error} (run as root, see `just bench-instructions`)"
-            ))
-        });
-
-        return measurement.with_secondary("cycles", cycles);
-    }
-
-    let instructions = HardwareCounter::instructions().unwrap_or_else(|error| {
-        counters_unavailable(format_args!(
-            "{error} (run as root, see `just bench-instructions`)"
-        ))
-    });
-
-    measurement.with_secondary("instructions", instructions)
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-fn secondary_counters(measurement: BenchMeasurement) -> BenchMeasurement {
-    if counters_request().is_some() {
-        counters_unavailable("this platform has no counter backend");
-    }
-
-    measurement
 }
 
 /// Drives a future that must finish without suspending, which holds for every in-memory request.

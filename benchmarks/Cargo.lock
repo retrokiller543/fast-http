@@ -435,39 +435,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
-name = "darwin-kperf"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5bfe73109be5fef62018b9774aa024a09ee30c2867025a8781ffdbe0b3b961f7"
-dependencies = [
- "darwin-kperf-events",
- "darwin-kperf-sys",
-]
-
-[[package]]
-name = "darwin-kperf-criterion"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13a8220f1bd613cf56f9091c36191882acec0a3a2cecfd089b741808704ce10a"
-dependencies = [
- "criterion",
- "darwin-kperf",
- "darwin-kperf-events",
-]
-
-[[package]]
-name = "darwin-kperf-events"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4bd79627faaefdbd5e334e6811411e944627e09d238e46f4f7ed7cc93841481e"
-
-[[package]]
-name = "darwin-kperf-sys"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7eda1eced5ca0e851725cc387dbc6643de322a9042588550301c28934d58b57"
-
-[[package]]
 name = "deranged"
 version = "0.5.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -569,7 +536,6 @@ name = "fast-http-bench-support"
 version = "0.0.0"
 dependencies = [
  "criterion",
- "darwin-kperf-criterion",
  "mhr-bench-metrics",
 ]
 

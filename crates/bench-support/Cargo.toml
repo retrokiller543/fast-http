@@ -11,5 +11,4 @@ publish = false
 
 [dependencies]
 bench_metrics.workspace = true
-darwin-kperf-criterion.workspace = true
 criterion.workspace = true

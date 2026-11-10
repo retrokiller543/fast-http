@@ -59,7 +59,7 @@ bench-check:
     cargo bench --workspace --all-features --no-run
     cargo bench {{ benchmarks }} --workspace --all-features --no-run
 
-# Wall time plus allocation count and bytes per iteration; `just bench-instructions` adds CPU counters.
+# Wall time plus allocation count and bytes per iteration; `just bench-counters` adds CPU counters.
 # Criterion keeps reports and baselines in `benchmarks/criterion` (override with `CRITERION_HOME`),
 # outside `target/`. Bench targets: core, format, router (fast-http alone) and routing, stack (against
 # axum, matchit and actix, in the benchmarks workspace). Arguments after `--` go to Criterion:
@@ -100,29 +100,11 @@ bench *args:
         cargo bench {{ benchmarks }} --workspace --all-features "${comparison[@]}" -- "${criterion[@]}"
     fi
 
-# Builds every bench as the normal user (never cargo under sudo: it would leave root-owned files in
-# `target/`), then runs each executable under sudo with `FAST_HTTP_COUNTERS=1` so the CPU counters
-# (instructions, plus cycles and IPC on Linux) join wall time and allocations. Prompts for the sudo
-# password. Same targets and `CRITERION_HOME` as `just bench`; extra arguments go to Criterion,
-# e.g. `just bench-instructions --save-baseline before`.
-[doc("Criterion benches with hardware counters (runs the bench binaries under sudo).")]
-bench-instructions *args:
-    #!/usr/bin/env bash
-    set -euo pipefail
-
-    export CRITERION_HOME="${CRITERION_HOME:-{{ justfile_directory() }}/benchmarks/criterion}"
-    executables=()
-
-    for manifest in Cargo.toml benchmarks/Cargo.toml; do
-        while IFS= read -r executable; do
-            executables+=("$executable")
-        done < <(cargo bench --manifest-path "$manifest" --workspace --all-features --no-run --message-format=json \
-            | jq -r 'select(.reason == "compiler-artifact" and .executable != null and (.target.kind | index("bench"))) | .executable')
-    done
-
-    for executable in "${executables[@]}"; do
-        sudo -E env FAST_HTTP_COUNTERS=1 "$executable" --bench {{ args }}
-    done
+# `just bench` with `FAST_HTTP_COUNTERS=1`: instructions, cycles and IPC join wall time and
+# allocations. No root needed; the bench exits if the counters cannot be opened.
+[doc("Criterion benches with CPU counters (instructions, cycles, IPC); same arguments as `bench`.")]
+bench-counters *args:
+    FAST_HTTP_COUNTERS=1 just bench {{ args }}
 
 # Builds the servers in release, runs each in turn and writes `benchmarks/load/results/<unix time>/`.
 # Takes several minutes with the defaults; see `benchmarks/load/README.md` for the flags.
