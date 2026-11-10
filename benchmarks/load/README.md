@@ -25,6 +25,16 @@ just load --repeat 3                                       # three runs, rotated
 
 Any unknown or malformed flag prints the full option list.
 
+### Pinned Linux runs
+
+`--server-cpus LIST` pins every server thread (`serve-* --cpus LIST`, via `sched_setaffinity`; actix pins inside its per-worker app factory) and `--client-cpus LIST` runs `oha` under `taskset -c LIST`. Lists are `0,2` or `0-3`. Giving server and client disjoint cores removes their competition for CPU, which is the largest source of noise on a shared machine. Both flags work together with `--repeat` and are rejected on other operating systems ("CPU pinning needs Linux"). `libc` is a Linux-only dependency of this crate for this.
+
+```sh
+just load-linux 0-3 4-7 --repeat 3 --workers 4
+```
+
+`just load-linux SERVER_CPUS CLIENT_CPUS [flags]` builds `benchmarks/load/Dockerfile` (Rust, `oha`, `taskset`), mounts the repository and builds and runs inside the container; Linux artefacts live in the `fast-http-load-target` volume, not in the host `benchmarks/target`. Results land in `benchmarks/load/results`. Docker on macOS runs in a VM, so give it at least as many CPUs as the two lists use.
+
 ## Internal role
 
 For each framework, `load` spawns `serve-<framework>`, which binds `127.0.0.1:0` and prints `listening <app addr> <control addr>`. A sampler thread records the server's RSS (sysinfo) every 100 ms for the whole run. Phases, in order:

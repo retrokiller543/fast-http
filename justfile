@@ -106,6 +106,14 @@ load *args:
     cargo build {{ benchmarks }} --release -p fast-http-load --bins
     benchmarks/target/release/load --output benchmarks/load/results {{ args }}
 
+# Runs the load comparison in a Linux container with server and oha pinned to separate cores.
+[doc("Load comparison in Docker with pinned CPUs; `just load-linux 0-3 4-7 --repeat 3`.")]
+load-linux server_cpus client_cpus *args:
+    docker build -q -t fast-http-load benchmarks/load
+    docker run --rm -v "{{ justfile_directory() }}:/src" -v fast-http-load-target:/src/benchmarks/target fast-http-load \
+        bash -c "cargo build --release --manifest-path benchmarks/Cargo.toml -p fast-http-load --bins && \
+        benchmarks/target/release/load --output benchmarks/load/results --server-cpus {{ server_cpus }} --client-cpus {{ client_cpus }} {{ args }}"
+
 # Run the router example end to end.
 example:
     cargo run -p fast-http-router --example users

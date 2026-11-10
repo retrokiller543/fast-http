@@ -11,7 +11,7 @@ fn main() -> Result<(), ServeError> {
     let options = Options::from_args()?;
     let control = control::spawn()?;
 
-    serve::runtime(options.workers)?.block_on(async {
+    serve::runtime(options.workers, options.cpus)?.block_on(async {
         let listener = TcpListener::bind(BIND).await?;
 
         serve::announce(listener.local_addr()?, control)?;

@@ -130,7 +130,7 @@ fn measure(
     framework: Framework,
     repeat: u32,
 ) -> Result<FrameworkReport, LoadError> {
-    let server = ServerProcess::spawn(framework, config.workers)?;
+    let server = ServerProcess::spawn(framework, config.workers, config.server_cpus.as_deref())?;
     let origin = Instant::now();
     let sampler = Sampler::start(server.pid(), config.sample, origin)?;
     let mut timeline = Timeline {
@@ -188,6 +188,7 @@ fn drive(
             scenario,
             connections,
             limit,
+            cpus: config.client_cpus.as_deref(),
         })
     };
     let mut allocations = Vec::new();

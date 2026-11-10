@@ -12,7 +12,7 @@ fn main() -> Result<(), ServeError> {
     let options = Options::from_args()?;
     let control = control::spawn()?;
 
-    serve::runtime(options.workers)?.block_on(async {
+    serve::runtime(options.workers, options.cpus)?.block_on(async {
         let server = Server::bind(&Tcp::new(), BIND).await?;
 
         serve::announce(server.local_addr()?, control)?;

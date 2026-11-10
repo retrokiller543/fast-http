@@ -27,11 +27,21 @@ pub struct ServerProcess {
 
 impl ServerProcess {
     /// Starts `framework`'s server and waits for its ready line.
-    pub fn spawn(framework: Framework, workers: usize) -> Result<Self, LoadError> {
+    pub fn spawn(
+        framework: Framework,
+        workers: usize,
+        cpus: Option<&str>,
+    ) -> Result<Self, LoadError> {
         let binary = std::env::current_exe()?.with_file_name(framework.binary());
-        let mut child = Command::new(&binary)
-            .arg("--workers")
-            .arg(workers.to_string())
+        let mut command = Command::new(&binary);
+
+        command.arg("--workers").arg(workers.to_string());
+
+        if let Some(cpus) = cpus {
+            command.arg("--cpus").arg(cpus);
+        }
+
+        let mut child = command
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .spawn()

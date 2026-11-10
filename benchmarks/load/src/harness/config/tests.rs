@@ -56,3 +56,25 @@ fn repeat_is_parsed_and_zero_is_rejected() {
     assert_eq!(config.repeat, 3);
     assert!(parse(&["--repeat", "0"]).is_err());
 }
+
+#[cfg(not(target_os = "linux"))]
+#[test]
+fn cpu_pinning_is_rejected_off_linux() {
+    assert_eq!(
+        parse(&["--server-cpus", "0-3"]).unwrap_err(),
+        ConfigError::PinningNeedsLinux
+    );
+    assert_eq!(
+        parse(&["--client-cpus", "4-7"]).unwrap_err(),
+        ConfigError::PinningNeedsLinux
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn cpu_pinning_lists_pass_through_on_linux() {
+    let config = parse(&["--server-cpus", "0-3", "--client-cpus", "4-7"]).expect("valid");
+
+    assert_eq!(config.server_cpus.as_deref(), Some("0-3"));
+    assert_eq!(config.client_cpus.as_deref(), Some("4-7"));
+}

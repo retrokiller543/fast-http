@@ -18,6 +18,8 @@ usage: load [options]
   --light-rate RPS      fixed request rate of the light profile (default: 1000)
   --medium-rate RPS     fixed request rate of the medium profile (default: 20000)
   --alloc-requests N    requests per allocation-counting pass (default: 10000)
+  --server-cpus LIST    pin the servers to these CPUs, e.g. 0-3 (Linux only)
+  --client-cpus LIST    pin oha to these CPUs, e.g. 4-7 (Linux only)
   --repeat N            runs of the whole matrix, rotating the framework order (default: 1)
   --output DIR          where result directories are written (default: results)";
 
@@ -157,6 +159,10 @@ pub struct Config {
     pub alloc_requests: u32,
     /// Times the whole matrix runs, each time starting with the next framework.
     pub repeat: u32,
+    /// CPUs the servers are pinned to, such as `0-3`; passed through verbatim.
+    pub server_cpus: Option<String>,
+    /// CPUs `oha` is pinned to, such as `4-7`; passed through verbatim.
+    pub client_cpus: Option<String>,
     /// Interval between RSS samples.
     pub sample: Duration,
     /// Directory the result directories are written to.
@@ -180,6 +186,8 @@ impl Default for Config {
             medium_rate: 20_000,
             alloc_requests: 10_000,
             repeat: 1,
+            server_cpus: None,
+            client_cpus: None,
             sample: Duration::from_millis(100),
             output: PathBuf::from("results"),
         }
@@ -215,6 +223,8 @@ impl Config {
                         .filter(|repeat| *repeat > 0)
                         .ok_or(ConfigError::InvalidValue { flag, value })?;
                 }
+                "--server-cpus" => config.server_cpus = Some(pinning(value)?),
+                "--client-cpus" => config.client_cpus = Some(pinning(value)?),
                 "--output" => config.output = PathBuf::from(value),
                 _ => return Err(ConfigError::UnknownFlag(flag)),
             }
@@ -253,6 +263,17 @@ pub enum ConfigError {
     /// A list names an unknown choice.
     #[error("unknown choice `{0}`")]
     UnknownChoice(String),
+    /// CPU pinning was requested on an OS without the affinity API the harness uses.
+    #[error("CPU pinning needs Linux")]
+    PinningNeedsLinux,
+}
+
+fn pinning(value: String) -> Result<String, ConfigError> {
+    if cfg!(target_os = "linux") {
+        Ok(value)
+    } else {
+        Err(ConfigError::PinningNeedsLinux)
+    }
 }
 
 fn list<T: Named>(value: &str) -> Result<Vec<T>, ConfigError> {

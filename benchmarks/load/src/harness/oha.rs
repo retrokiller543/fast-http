@@ -35,6 +35,8 @@ pub struct Load<'a> {
     pub connections: usize,
     /// Length of the run.
     pub limit: Limit,
+    /// CPUs to pin `oha` to with `taskset -c`; unpinned when `None`.
+    pub cpus: Option<&'a str>,
 }
 
 /// Client-side result of a run.
@@ -96,7 +98,16 @@ struct Percentiles {
 
 /// Runs `oha` for `load` and waits for its report.
 pub fn run(load: Load<'_>) -> Result<Outcome, LoadError> {
-    let mut command = Command::new("oha");
+    let mut command = match load.cpus {
+        Some(cpus) if cfg!(target_os = "linux") => {
+            let mut command = Command::new("taskset");
+
+            command.args(["-c", cpus, "oha"]);
+
+            command
+        }
+        _ => Command::new("oha"),
+    };
 
     command
         .args(["--no-tui", "--output-format", "json", "-c"])

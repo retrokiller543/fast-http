@@ -19,3 +19,6 @@ serde_json.workspace = true
 sysinfo.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["net", "rt-multi-thread"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc.workspace = true

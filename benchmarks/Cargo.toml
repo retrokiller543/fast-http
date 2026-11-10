@@ -26,6 +26,7 @@ axum = { version = "0.8.9", default-features = false, features = ["http1", "toki
 matchit = "0.9.2"
 actix-router = "0.5.5"
 actix-web = { version = "4.19.0", default-features = false }
+libc = "0.2.191"
 sysinfo = { version = "0.40.1", default-features = false, features = ["system"] }
 
 fast-http-bench = { path = "comparison" }

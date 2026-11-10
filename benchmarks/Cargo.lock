@@ -571,6 +571,7 @@ dependencies = [
  "fast-http-bench",
  "fast-http-server",
  "fast-http-transport",
+ "libc",
  "serde",
  "serde_json",
  "sysinfo",
