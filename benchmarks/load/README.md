@@ -35,6 +35,14 @@ just load-linux 0-3 4-7 --repeat 3 --workers 4
 
 `just load-linux SERVER_CPUS CLIENT_CPUS [flags]` builds `benchmarks/load/Dockerfile` (Rust, `oha`, `taskset`), mounts the repository and builds and runs inside the container; Linux artefacts live in the `fast-http-load-target` volume, not in the host `benchmarks/target`. Results land in `benchmarks/load/results`. Docker on macOS runs in a VM, so give it at least as many CPUs as the two lists use.
 
+### Profiling one server
+
+```sh
+just profile-server fast-http /users/42
+```
+
+`just profile-server FRAMEWORK [PATH]` builds the `profiling` profile (release with debug info, `benchmarks/Cargo.toml`), starts one `serve-FRAMEWORK --workers 4`, drives it with `oha` (64 connections, 15 s) and samples it for 10 s after a 3 s warm-up. The server and `oha` are killed on exit, including when sampling fails. macOS writes `benchmarks/load/results/profile-FRAMEWORK-PATH.txt` with `sample`; Linux writes `.data` with `perf record -g`. Profile the server, not the client: the sampled process is the one whose pid the recipe holds.
+
 ## Internal role
 
 For each framework, `load` spawns `serve-<framework>`, which binds `127.0.0.1:0` and prints `listening <app addr> <control addr>`. A sampler thread records the server's RSS (sysinfo) every 100 ms for the whole run. Phases, in order:

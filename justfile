@@ -114,6 +114,50 @@ load-linux server_cpus client_cpus *args:
         bash -c "cargo build --release --manifest-path benchmarks/Cargo.toml -p fast-http-load --bins && \
         benchmarks/target/release/load --output benchmarks/load/results --server-cpus {{ server_cpus }} --client-cpus {{ client_cpus }} {{ args }}"
 
+# Writes `benchmarks/load/results/profile-<framework>-<scenario>.txt` (macOS `sample`) or `.data`
+# (Linux `perf record`); scenario is a path such as `/users/42`.
+[doc("CPU profile of one server under load; `just profile-server fast-http /users/42`.")]
+profile-server framework path="/health":
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    cargo build --manifest-path benchmarks/Cargo.toml --profile profiling -p fast-http-load --bins
+    mkdir -p benchmarks/load/results
+    out="benchmarks/load/results/profile-{{ framework }}-$(echo '{{ path }}' | tr '/' '_')"
+    ready="$out.ready"
+    server_pid=""
+    oha_pid=""
+
+    cleanup() {
+        if [[ -n "$oha_pid" ]]; then
+            kill "$oha_pid" 2>/dev/null || true
+        fi
+
+        if [[ -n "$server_pid" ]]; then
+            kill "$server_pid" 2>/dev/null || true
+        fi
+    }
+    trap cleanup EXIT
+
+    mkfifo "$ready"
+    benchmarks/target/profiling/serve-{{ framework }} --workers 4 > "$ready" &
+    server_pid=$!
+    exec 3< "$ready"
+    rm -f "$ready"
+    read -r _ addr _ <&3
+
+    oha --no-tui -c 64 -z 15s "http://$addr{{ path }}" > /dev/null &
+    oha_pid=$!
+    sleep 3
+
+    if [[ "$(uname)" == Darwin ]]; then
+        sample "$server_pid" 10 -file "$out.txt"
+    else
+        perf record -g -p "$server_pid" -o "$out.data" -- sleep 10
+    fi
+
+    wait "$oha_pid"
+
 # Run the router example end to end.
 example:
     cargo run -p fast-http-router --example users

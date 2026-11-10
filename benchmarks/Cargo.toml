@@ -36,3 +36,7 @@ fast-http-format = { path = "../crates/format", default-features = false }
 fast-http-router = { path = "../crates/router" }
 fast-http-server = { path = "../crates/server" }
 fast-http-transport = { path = "../crates/transport" }
+
+[profile.profiling]
+inherits = "release"
+debug = true
