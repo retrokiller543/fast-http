@@ -14,12 +14,16 @@ fn main() -> Result<(), ServeError> {
     let control = control::spawn()?;
     let listener = TcpListener::bind(BIND)?;
     let addr = listener.local_addr()?;
+    let cpus = options.cpus;
+
+    if let Some(cpus) = &cpus {
+        serve::check_pinning(cpus)?;
+    }
 
     System::new().block_on(async move {
-        let cpus = options.cpus;
         let server = HttpServer::new(move || {
             if let Some(cpus) = &cpus {
-                pin::current_thread(cpus);
+                pin::require(cpus);
             }
 
             App::new().configure(apps::actix)

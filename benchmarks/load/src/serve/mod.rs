@@ -63,6 +63,17 @@ pub enum ServeError {
     /// The command line could not be parsed.
     #[error("{0}; usage: serve-<framework> [--workers N] [--cpus LIST]")]
     Args(String),
+    /// A CPU id does not fit a CPU set.
+    #[error("CPU {0} is out of range, the highest supported id is {max}", max = pin::MAX_CPUS - 1)]
+    CpuOutOfRange(usize),
+    /// The CPU list cannot be pinned to, such as a CPU the machine does not have.
+    #[error("cannot pin to CPUs {cpus:?}: {source}")]
+    Pin {
+        /// The requested CPUs.
+        cpus: Vec<usize>,
+        /// The OS error.
+        source: io::Error,
+    },
     /// Binding, the runtime or the server itself failed.
     #[error(transparent)]
     Io(#[from] io::Error),
@@ -90,6 +101,10 @@ fn cpu_list(value: &str) -> Result<Vec<usize>, ServeError> {
             return Err(invalid());
         }
 
+        if let Some(cpu) = [first, last].into_iter().find(|cpu| *cpu >= pin::MAX_CPUS) {
+            return Err(ServeError::CpuOutOfRange(cpu));
+        }
+
         cpus.extend(first..=last);
     }
 
@@ -97,16 +112,26 @@ fn cpu_list(value: &str) -> Result<Vec<usize>, ServeError> {
 }
 
 /// Multi-thread tokio runtime with `workers` worker threads, each pinned to `cpus` when given.
-pub fn runtime(workers: usize, cpus: Option<Vec<usize>>) -> io::Result<Runtime> {
+/// Fails when `cpus` cannot be pinned to; a worker that still fails to pin panics.
+pub fn runtime(workers: usize, cpus: Option<Vec<usize>>) -> Result<Runtime, ServeError> {
     let mut builder = tokio::runtime::Builder::new_multi_thread();
 
     builder.worker_threads(workers).enable_all();
 
     if let Some(cpus) = cpus {
-        builder.on_thread_start(move || pin::current_thread(&cpus));
+        check_pinning(&cpus)?;
+        builder.on_thread_start(move || pin::require(&cpus));
     }
 
-    builder.build()
+    Ok(builder.build()?)
+}
+
+/// Fails with [`ServeError::Pin`] when the calling process cannot pin a thread to `cpus`.
+pub fn check_pinning(cpus: &[usize]) -> Result<(), ServeError> {
+    pin::check(cpus).map_err(|source| ServeError::Pin {
+        cpus: cpus.to_vec(),
+        source,
+    })
 }
 
 #[cfg(test)]
