@@ -21,8 +21,8 @@ pub trait ServerConfig: Send + Sync + 'static {
     const H2_KEEP_ALIVE_INTERVAL: Option<Duration> = None;
     /// Time in-flight requests get to finish after shutdown starts.
     const DRAIN_TIMEOUT: Duration = Duration::from_secs(30);
-    /// Whether requests carry a [`PeerAddr`](fast_http_core::PeerAddr) extension. Inserting it
-    /// costs an allocation per request.
+    /// Whether handlers can extract the connection's [`PeerAddr`](fast_http_core::PeerAddr). It
+    /// is carried around each poll of the request, so it costs no allocation.
     const PEER_ADDR: bool = true;
 }
 

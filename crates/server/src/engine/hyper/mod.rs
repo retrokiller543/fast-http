@@ -1,7 +1,7 @@
 use std::{convert::Infallible, pin::pin, sync::Arc};
 
 use ::hyper::{body::Incoming, rt::Executor, service::service_fn};
-use fast_http_core::{PeerAddr, Routes};
+use fast_http_core::{Routes, with_peer};
 use fast_http_transport::{ConnInfo, Connection};
 use http_body_util::Limited;
 use hyper_util::{
@@ -86,19 +86,15 @@ impl Engine for Hyper {
         routes: Arc<R>,
         mut shutdown: Shutdown,
     ) -> Result<(), EngineError> {
-        let peer = info.peer.filter(|_| state.peer_addr).map(PeerAddr);
+        let peer = info.peer.filter(|_| state.peer_addr);
         let max_body_bytes = state.max_body_bytes;
-        let service = service_fn(move |mut req: http::Request<Incoming>| {
+        let service = service_fn(move |req: http::Request<Incoming>| {
             let routes = Arc::clone(&routes);
 
             async move {
-                if let Some(peer) = peer {
-                    req.extensions_mut().insert(peer);
-                }
-
                 let req = req.map(|body| Limited::new(body, max_body_bytes));
 
-                Ok::<_, Infallible>(routes.dispatch(req).await)
+                Ok::<_, Infallible>(with_peer(peer, routes.dispatch(req)).await)
             }
         });
         let mut conn = pin!(

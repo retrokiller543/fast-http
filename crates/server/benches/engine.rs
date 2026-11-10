@@ -5,16 +5,19 @@
 //! allocation counter, so nothing else allocates while a request is measured. The client reuses
 //! one buffer and one connection, which keeps connection setup out of every count.
 
+use std::net::SocketAddr;
+
 use criterion::{Criterion, criterion_group, criterion_main};
 use fast_http_bench_support::{Budget, Measurement, bench, criterion, measure};
 use fast_http_core::Path;
 use fast_http_format::Negotiated;
 use fast_http_router::{Route, Router};
 use fast_http_server::Server;
-use fast_http_transport::Memory;
+use fast_http_transport::{Memory, Tcp};
 use serde::Serialize;
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt, DuplexStream},
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, DuplexStream},
+    net::TcpStream,
     runtime::{Builder, Runtime},
 };
 
@@ -34,12 +37,12 @@ struct User {
 }
 
 /// The kept-alive client end and its response buffer.
-struct Client {
-    stream: DuplexStream,
+struct Client<S> {
+    stream: S,
     buf: Vec<u8>,
 }
 
-impl Client {
+impl<S: AsyncRead + AsyncWrite + Unpin> Client<S> {
     /// One request, read until the response body is complete.
     async fn round_trip(&mut self, request: &[u8]) -> usize {
         let mut read = 0;
@@ -78,12 +81,33 @@ async fn user(Path(id): Path<u64>) -> Negotiated<User> {
     Negotiated::new(User { id, name: "Ada" })
 }
 
-fn connect(runtime: &Runtime) -> Client {
+fn routes() -> impl fast_http_core::Routes {
+    Router::new()
+        .route(Route::new("/health").expect("pattern").get(health))
+        .route(Route::new("/users/{id}").expect("pattern").get(user))
+}
+
+/// A loopback TCP connection, whose server side sees a peer address like a deployed server.
+fn connect_tcp(runtime: &Runtime) -> Client<TcpStream> {
+    runtime.block_on(async {
+        let server = Server::bind(&Tcp::new(), SocketAddr::from(([127, 0, 0, 1], 0)))
+            .await
+            .expect("bind");
+        let addr = server.local_addr().expect("local addr");
+
+        tokio::spawn(server.serve(routes()));
+
+        Client {
+            stream: TcpStream::connect(addr).await.expect("connect"),
+            buf: vec![0; 16 * 1024],
+        }
+    })
+}
+
+fn connect(runtime: &Runtime) -> Client<DuplexStream> {
     runtime.block_on(async {
         let (memory, connector) = Memory::new(64 * 1024);
-        let routes = Router::new()
-            .route(Route::new("/health").expect("pattern").get(health))
-            .route(Route::new("/users/{id}").expect("pattern").get(user));
+        let routes = routes();
         let server = Server::bind(&memory, ()).await.expect("bind");
 
         tokio::spawn(server.serve(routes));
@@ -100,8 +124,18 @@ fn engine(c: &mut Criterion<Measurement>) {
         .enable_all()
         .build()
         .expect("runtime");
-    let mut client = connect(&runtime);
 
+    run(c, &runtime, "engine/h1", connect(&runtime));
+    run(c, &runtime, "engine/h1-tcp", connect_tcp(&runtime));
+}
+
+/// Measures every case over one kept-alive `client`, filed under `group`.
+fn run<S: AsyncRead + AsyncWrite + Unpin>(
+    c: &mut Criterion<Measurement>,
+    runtime: &Runtime,
+    group: &str,
+    mut client: Client<S>,
+) {
     runtime.block_on(client.round_trip(CASES[0].1));
 
     for (name, request) in CASES {
@@ -120,14 +154,14 @@ fn engine(c: &mut Criterion<Measurement>) {
 
         assert!(
             bytes < 4096.0,
-            "engine/h1/{name} reallocated the read buffer: {bytes} bytes/request"
+            "{group}/{name} reallocated the read buffer: {bytes} bytes/request"
         );
         println!(
-            "alloc engine/h1/{name} (per request, mean of {REQUESTS}): count={count} bytes={bytes}"
+            "alloc {group}/{name} (per request, mean of {REQUESTS}): count={count} bytes={bytes}"
         );
         bench(
             c,
-            "engine/h1",
+            group,
             name,
             Budget::Report,
             || (),

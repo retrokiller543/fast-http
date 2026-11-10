@@ -1,4 +1,4 @@
-use std::{any::type_name, convert::Infallible, net::SocketAddr};
+use std::{any::type_name, convert::Infallible};
 
 use http::{HeaderMap, request::Parts};
 
@@ -19,24 +19,6 @@ impl<T: Clone + Send + Sync + 'static> FromParts for Extension<T> {
             .map(Extension)
             .ok_or(Rejection::MissingExtension {
                 name: type_name::<T>(),
-            })
-    }
-}
-
-/// Address of the connected peer, inserted into the extensions by the engine.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PeerAddr(pub SocketAddr);
-
-impl FromParts for PeerAddr {
-    type Rejection = Rejection;
-
-    fn from_parts(parts: &Parts) -> Result<Self, Self::Rejection> {
-        parts
-            .extensions
-            .get::<PeerAddr>()
-            .copied()
-            .ok_or(Rejection::MissingExtension {
-                name: type_name::<PeerAddr>(),
             })
     }
 }

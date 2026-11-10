@@ -22,7 +22,7 @@ pub use error::{
 };
 pub use extract::{
     Extension, FromParams, FromParts, FromPathParam, FromRequest, Path, PathArgs, PathParams,
-    PeerAddr, Segments,
+    PeerAddr, Segments, WithPeer, with_peer,
 };
 pub use flow::{Flow, Identity, Next, Stack, reject};
 pub use guard::{BodyGuard, GuardPhase, HeadGuard};

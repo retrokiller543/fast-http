@@ -66,11 +66,8 @@ async fn hello() -> &'static str {
     "hello"
 }
 
-async fn peer(parts: &Parts) -> String {
-    parts
-        .extensions
-        .get::<PeerAddr>()
-        .map_or_else(|| "none".to_owned(), |peer| peer.0.to_string())
+async fn peer(peer: Option<PeerAddr>) -> String {
+    peer.map_or_else(|| "none".to_owned(), |peer| peer.0.to_string())
 }
 
 async fn echo(Raw(body): Raw) -> Bytes {
