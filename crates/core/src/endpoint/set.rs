@@ -3,6 +3,13 @@ use http::{Method, request::Parts};
 
 use crate::{Endpoint, ErrorHandler, GuardPhase, PathParams, Rejection, ReqBody, Response};
 
+use super::either::{
+    EndpointFuture1, EndpointFuture2, EndpointFuture3, EndpointFuture4, EndpointFuture5,
+    EndpointFuture6, EndpointFuture7, EndpointFuture8, EndpointFuture9, EndpointFuture10,
+    EndpointFuture11, EndpointFuture12, EndpointFuture13, EndpointFuture14, EndpointFuture15,
+    EndpointFuture16,
+};
+
 /// Outcome of choosing among the endpoints of one path.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Selection {
@@ -20,14 +27,14 @@ pub trait EndpointSet: Send + Sync + 'static {
     fn select(&self, parts: &Parts, body: Option<&Bytes>) -> Selection;
 
     /// Calls the endpoint at `index`, which must come from [`EndpointSet::select`].
-    fn call<B: ReqBody, H: ErrorHandler>(
-        &self,
+    fn call<'r, B: ReqBody, H: ErrorHandler>(
+        &'r self,
         index: usize,
-        parts: &Parts,
-        params: PathParams<'_>,
+        parts: &'r Parts,
+        params: PathParams<'r>,
         body: B,
-        handler: &H,
-    ) -> impl Future<Output = Response> + Send;
+        handler: &'r H,
+    ) -> impl Future<Output = Response> + Send + use<'r, B, H, Self>;
 }
 
 fn method_applies(method: &Method, requested: &Method, head_alias: bool) -> bool {
@@ -95,20 +102,20 @@ impl EndpointSet for () {
         Selection::Rejected(Rejection::MethodNotAllowed { allow: Vec::new() })
     }
 
-    async fn call<B: ReqBody, H: ErrorHandler>(
-        &self,
+    async fn call<'r, B: ReqBody, H: ErrorHandler>(
+        &'r self,
         _: usize,
-        _: &Parts,
-        _: PathParams<'_>,
+        _: &'r Parts,
+        _: PathParams<'r>,
         _: B,
-        _: &H,
+        _: &'r H,
     ) -> Response {
         unreachable!("an empty set never selects an endpoint")
     }
 }
 
 macro_rules! endpoint_set {
-    ($($endpoint:ident : $index:tt),+) => {
+    ($future:ident; $($endpoint:ident : $index:tt),+) => {
         impl<$($endpoint: Endpoint),+> EndpointSet for ($($endpoint,)+) {
             fn select(&self, parts: &Parts, body: Option<&Bytes>) -> Selection {
                 let methods = [$(self.$index.method()),+];
@@ -126,16 +133,16 @@ macro_rules! endpoint_set {
                 rejection(method_seen, &methods, http::StatusCode::BAD_REQUEST)
             }
 
-            async fn call<Bd: ReqBody, Eh: ErrorHandler>(
-                &self,
+            fn call<'r, Bd: ReqBody, Eh: ErrorHandler>(
+                &'r self,
                 index: usize,
-                parts: &Parts,
-                params: PathParams<'_>,
+                parts: &'r Parts,
+                params: PathParams<'r>,
                 body: Bd,
-                handler: &Eh,
-            ) -> Response {
+                handler: &'r Eh,
+            ) -> impl Future<Output = Response> + Send + use<'r, Bd, Eh, $($endpoint),+> {
                 match index {
-                    $($index => self.$index.call(parts, params, body, handler).await,)+
+                    $($index => $future::$endpoint(self.$index.call(parts, params, body, handler)),)+
                     _ => unreachable!("index comes from `EndpointSet::select`"),
                 }
             }
@@ -143,19 +150,19 @@ macro_rules! endpoint_set {
     };
 }
 
-endpoint_set!(A: 0);
-endpoint_set!(A: 0, B: 1);
-endpoint_set!(A: 0, B: 1, C: 2);
-endpoint_set!(A: 0, B: 1, C: 2, D: 3);
-endpoint_set!(A: 0, B: 1, C: 2, D: 3, E: 4);
-endpoint_set!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5);
-endpoint_set!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6);
-endpoint_set!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7);
-endpoint_set!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7, I: 8);
-endpoint_set!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7, I: 8, J: 9);
-endpoint_set!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7, I: 8, J: 9, K: 10);
-endpoint_set!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7, I: 8, J: 9, K: 10, L: 11);
-endpoint_set!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7, I: 8, J: 9, K: 10, L: 11, M: 12);
-endpoint_set!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7, I: 8, J: 9, K: 10, L: 11, M: 12, N: 13);
-endpoint_set!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7, I: 8, J: 9, K: 10, L: 11, M: 12, N: 13, O: 14);
-endpoint_set!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7, I: 8, J: 9, K: 10, L: 11, M: 12, N: 13, O: 14, P: 15);
+endpoint_set!(EndpointFuture1; A: 0);
+endpoint_set!(EndpointFuture2; A: 0, B: 1);
+endpoint_set!(EndpointFuture3; A: 0, B: 1, C: 2);
+endpoint_set!(EndpointFuture4; A: 0, B: 1, C: 2, D: 3);
+endpoint_set!(EndpointFuture5; A: 0, B: 1, C: 2, D: 3, E: 4);
+endpoint_set!(EndpointFuture6; A: 0, B: 1, C: 2, D: 3, E: 4, F: 5);
+endpoint_set!(EndpointFuture7; A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6);
+endpoint_set!(EndpointFuture8; A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7);
+endpoint_set!(EndpointFuture9; A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7, I: 8);
+endpoint_set!(EndpointFuture10; A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7, I: 8, J: 9);
+endpoint_set!(EndpointFuture11; A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7, I: 8, J: 9, K: 10);
+endpoint_set!(EndpointFuture12; A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7, I: 8, J: 9, K: 10, L: 11);
+endpoint_set!(EndpointFuture13; A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7, I: 8, J: 9, K: 10, L: 11, M: 12);
+endpoint_set!(EndpointFuture14; A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7, I: 8, J: 9, K: 10, L: 11, M: 12, N: 13);
+endpoint_set!(EndpointFuture15; A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7, I: 8, J: 9, K: 10, L: 11, M: 12, N: 13, O: 14);
+endpoint_set!(EndpointFuture16; A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7, I: 8, J: 9, K: 10, L: 11, M: 12, N: 13, O: 14, P: 15);

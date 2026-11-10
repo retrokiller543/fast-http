@@ -4,9 +4,16 @@ use http::{Method, request::Parts};
 use crate::{ErrorHandler, GuardPhase, PathParams, ReqBody, Response};
 
 mod dispatch;
+mod either;
 mod set;
 
 pub use dispatch::{DispatchOptions, dispatch_set};
+pub use either::{
+    EndpointFuture1, EndpointFuture2, EndpointFuture3, EndpointFuture4, EndpointFuture5,
+    EndpointFuture6, EndpointFuture7, EndpointFuture8, EndpointFuture9, EndpointFuture10,
+    EndpointFuture11, EndpointFuture12, EndpointFuture13, EndpointFuture14, EndpointFuture15,
+    EndpointFuture16,
+};
 pub use set::{EndpointSet, Selection};
 
 /// One handler variant for a route. Generated or hand-written; nothing here needs macros.
