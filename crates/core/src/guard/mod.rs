@@ -27,3 +27,10 @@ pub trait BodyGuard {
     /// Returns the value when the guard matches.
     fn check(parts: &Parts, body: &Bytes) -> Option<Self::Output>;
 }
+
+mod request;
+
+pub use request::{header_eq, header_has, query_eq, query_has};
+
+#[cfg(test)]
+mod tests;
