@@ -61,10 +61,10 @@ bench-check:
 
 # Wall time plus allocation count and bytes per iteration; `just bench-counters` adds CPU counters.
 # Criterion keeps reports and baselines in `benchmarks/criterion` (override with `CRITERION_HOME`),
-# outside `target/`. Bench targets: core, format, router (fast-http alone) and routing, stack (against
+# outside `target/`. Bench targets: core, format, router, engine (fast-http alone) and routing, stack (against
 # axum, matchit and actix, in the benchmarks workspace). Arguments after `--` go to Criterion:
 # `just bench router -- --save-baseline before`. With no target, every bench runs.
-[doc("Criterion benches; targets core, format, router, routing, stack; Criterion args after `--`.")]
+[doc("Criterion benches; targets core, format, router, engine, routing, stack; Criterion args after `--`.")]
 bench *args:
     #!/usr/bin/env bash
     set -euo pipefail

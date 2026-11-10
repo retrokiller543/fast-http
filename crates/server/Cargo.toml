@@ -26,6 +26,8 @@ tracing.workspace = true
 
 [dev-dependencies]
 bytes.workspace = true
+criterion.workspace = true
+fast-http-bench-support.workspace = true
 fast-http-format = { workspace = true, features = ["json"] }
 fast-http-router.workspace = true
 fast-http-transport = { workspace = true, features = ["tls"] }
@@ -34,3 +36,7 @@ rustls.workspace = true
 serde.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "time"] }
 tokio-rustls.workspace = true
+
+[[bench]]
+name = "engine"
+harness = false

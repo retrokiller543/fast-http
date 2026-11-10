@@ -326,6 +326,8 @@ name = "fast-http-server"
 version = "0.0.0"
 dependencies = [
  "bytes",
+ "criterion",
+ "fast-http-bench-support",
  "fast-http-core",
  "fast-http-format",
  "fast-http-router",
