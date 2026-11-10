@@ -11,15 +11,18 @@
 //! Serves plain HTTP/1.1 and prior-knowledge h2 on port 3000, as behind a TLS-terminating
 //! proxy. Ctrl-C drains in-flight requests and exits.
 
+use std::borrow::Cow;
+use std::fmt::{Display, Formatter};
 use std::net::SocketAddr;
-
-use fast_http_core::{ErrorResponse, IntoResponse, Path, PeerAddr, Response, ResponseBody};
+use http::request::Parts;
+use fast_http_core::{ErrorHandler, ErrorResponse, HandlerError, IntoResponse, Path, PeerAddr, Response, ResponseBody};
 use fast_http_format::{Body, Negotiated};
 use fast_http_router::{Route, Router};
 use fast_http_server::Server;
 use fast_http_transport::Tcp;
 use http::StatusCode;
 use serde::{Deserialize, Serialize};
+use type_match::type_match;
 
 /// A user as returned.
 #[derive(Debug, Serialize)]
@@ -76,8 +79,67 @@ async fn create(body: Body<NewUser>) -> Negotiated<User> {
     Negotiated::new(User { id: 1, name }).status(StatusCode::CREATED)
 }
 
+#[derive(Debug)]
+struct TestError {
+    test_error: Cow<'static, str>
+}
+
+impl Display for TestError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.test_error)
+    }
+}
+
+impl std::error::Error for TestError {}
+
+impl IntoResponse for TestError {
+    fn into_response(self) -> Response {
+        let response = Response::builder()
+            .status(self.status())
+            .header("content-type", "application/json")
+            .header("x-error", self.test_error.to_string())
+            .body(ResponseBody::from(format!(
+                r#"{{
+                "test_error": "{}"
+                }}"#
+            , self.test_error)))
+            .unwrap();
+
+        response
+    }
+}
+
+impl ErrorResponse for TestError {
+    fn status(&self) -> StatusCode {
+        StatusCode::INTERNAL_SERVER_ERROR
+    }
+}
+
+async fn test(Path(name): Path<&str>) -> Result<Negotiated<User>, TestError> {
+    Err(TestError { test_error: Cow::from(name.to_string()) })
+}
+
 async fn peer(PeerAddr(addr): PeerAddr) -> String {
     format!("hello {addr}\n")
+}
+
+struct GlobalErrorHandler;
+
+impl ErrorHandler for GlobalErrorHandler {
+    async fn handle(&self, error: HandlerError, parts: &Parts) -> Response {
+        type_match! {
+            match &error {
+                test_error @ TestError => {
+                    eprintln!("Got a TestError: {test_error} (from {parts:?})");
+                }
+                _ => {
+                    eprintln!("error: {error} (from {parts:?})");
+                }
+            }
+        }
+
+        error.respond(parts)
+    }
 }
 
 #[tokio::main]
@@ -85,7 +147,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let routes = Router::new()
         .route(Route::new("/users/{id}")?.get(show))
         .route(Route::new("/users")?.post(create))
-        .route(Route::new("/peer")?.get(peer));
+        .route(Route::new("/peer")?.get(peer))
+        .route(Route::new("/test/{error}")?.get(test))
+        .with_error_handler(GlobalErrorHandler);
     let server = Server::bind(&Tcp::new(), SocketAddr::from(([127, 0, 0, 1], 3000))).await?;
 
     println!("listening on http://{}", server.local_addr()?);

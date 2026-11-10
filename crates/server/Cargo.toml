@@ -23,6 +23,7 @@ hyper-util = { workspace = true, features = ["server-auto", "tokio"] }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 tracing.workspace = true
+type-match = "0.1.1"
 
 [dev-dependencies]
 bytes.workspace = true
