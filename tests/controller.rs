@@ -1,8 +1,11 @@
 #![cfg(feature = "macros")]
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
+use std::{
+    num::NonZeroU64,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use bytes::Bytes;
@@ -107,6 +110,41 @@ impl Chat {
     #[post("/ask")]
     async fn ask(&self, body: First) -> String {
         format!("any:{}", body.0)
+    }
+
+    #[get("/ambient", when(headers.contains_key("x-a"), query.get("m") == Some("1")))]
+    async fn ambient(&self) -> &'static str {
+        "ambient"
+    }
+
+    #[get("/ambient")]
+    async fn ambient_default(&self) -> &'static str {
+        "default"
+    }
+
+    #[get("/path/{x}", when(parts.uri.path().ends_with("/7")))]
+    async fn seven(&self, parts: &Parts) -> &'static str {
+        "seven"
+    }
+
+    #[get("/path/{x}")]
+    async fn other(&self) -> &'static str {
+        "other"
+    }
+
+    #[get("/nz/{id}", when(*id == 0))]
+    async fn nz_bad(&self, Path(id): Path<u64>) -> &'static str {
+        "zero"
+    }
+
+    #[get("/nz/{id}")]
+    async fn nz(&self, Path(id): Path<NonZeroU64>) -> String {
+        format!("nz:{id}")
+    }
+
+    #[post("/static", when(item.0 == "x"))]
+    async fn stat(item: First) -> String {
+        format!("static:{}", item.0)
     }
 
     #[post("/two", when(first.0 == "a"))]
@@ -314,4 +352,80 @@ async fn controllers_merge_into_one_router() {
 #[test]
 fn routes_reports_a_malformed_pattern() {
     assert!(Arc::new(Broken).routes().is_err());
+}
+
+#[tokio::test]
+async fn controller_guard_reads_headers_and_query_without_declaring_them() {
+    let ok = send(
+        &chat(),
+        Method::GET,
+        "/chat/ambient?m=1",
+        Some(("x-a", "1")),
+        "",
+    )
+    .await;
+    let no_header = send(&chat(), Method::GET, "/chat/ambient?m=1", None, "").await;
+    let no_query = send(
+        &chat(),
+        Method::GET,
+        "/chat/ambient",
+        Some(("x-a", "1")),
+        "",
+    )
+    .await;
+
+    assert_eq!(ok.1, "ambient");
+    assert_eq!(no_header.1, "default");
+    assert_eq!(no_query.1, "default");
+}
+
+#[tokio::test]
+async fn controller_guard_reads_the_whole_head_through_a_parts_parameter() {
+    assert_eq!(
+        send(&chat(), Method::GET, "/chat/path/7", None, "").await.1,
+        "seven"
+    );
+    assert_eq!(
+        send(&chat(), Method::GET, "/chat/path/8", None, "").await.1,
+        "other"
+    );
+}
+
+#[tokio::test]
+async fn controller_variants_may_take_the_same_path_parameter_as_different_types() {
+    assert_eq!(
+        send(&chat(), Method::GET, "/chat/nz/0", None, "").await.1,
+        "zero"
+    );
+    assert_eq!(
+        send(&chat(), Method::GET, "/chat/nz/5", None, "").await.1,
+        "nz:5"
+    );
+}
+
+#[tokio::test]
+async fn controller_method_without_receiver_can_carry_a_body_guard() {
+    FIRST_PARSES.store(0, Ordering::SeqCst);
+
+    assert_eq!(post("/chat/static", None, "x").await.1, "static:x");
+    assert_eq!(
+        post("/chat/static", None, "y").await.0,
+        StatusCode::BAD_REQUEST
+    );
+}
+
+#[tokio::test]
+async fn controller_a_parameter_named_like_a_reserved_view_takes_precedence() {
+    let get = |uri: &'static str, header| async move {
+        send(&chat(), Method::GET, uri, header, "").await.0
+    };
+
+    assert_eq!(
+        get("/chat/mode", Some(("x-mode", "fast"))).await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        get("/chat/mode", Some(("x-mode", "other"))).await,
+        StatusCode::BAD_REQUEST
+    );
 }

@@ -83,3 +83,41 @@ fn analyze_rejects_self() {
 
     assert!(error.to_string().contains("cannot use `self`"));
 }
+
+#[test]
+fn analyze_reserved_names_without_a_matching_parameter_are_hints() {
+    let expr: Expr = parse_quote!(headers.contains_key("x") && query.contains("y"));
+    let analyzed = analyze(&expr, &[]).expect("analyzes");
+
+    assert!(analyzed.reserved == [Reserved::Headers, Reserved::Query]);
+}
+
+#[test]
+fn analyze_a_parameter_with_the_reserved_name_is_used_instead() {
+    let params = [param(quote!(headers))];
+    let expr: Expr = parse_quote!(headers.contains_key("x") && query.contains("y"));
+    let analyzed = analyze(&expr, &params).expect("analyzes");
+
+    assert_eq!(analyzed.uses, [0]);
+    assert!(analyzed.reserved == [Reserved::Query]);
+}
+
+#[test]
+fn analyze_a_destructured_binding_named_query_also_wins() {
+    let params = [param(quote!(Query(query)))];
+    let expr: Expr = parse_quote!(query.page == 1);
+
+    assert!(
+        analyze(&expr, &params)
+            .expect("analyzes")
+            .reserved
+            .is_empty()
+    );
+}
+
+#[test]
+fn analyze_unrelated_names_are_not_reserved() {
+    let expr: Expr = parse_quote!(mode == 1);
+
+    assert!(analyze(&expr, &[]).expect("analyzes").reserved.is_empty());
+}

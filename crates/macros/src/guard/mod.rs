@@ -4,15 +4,34 @@ use syn::{Error, Expr, Ident, Pat};
 
 use crate::expand::Param;
 
+/// A view of the request head that a guard may name without the method taking it as a parameter.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Reserved {
+    /// `headers`: the request's `&HeaderMap`.
+    Headers,
+    /// `query`: a `QueryParams` view of the query string.
+    Query,
+}
+
+impl Reserved {
+    const ALL: [(Self, &'static str); 2] = [(Self::Headers, "headers"), (Self::Query, "query")];
+}
+
 /// A guard together with the method parameters it mentions.
 pub struct Analyzed<'a> {
     /// The expression, emitted exactly as written.
     pub expr: &'a Expr,
     /// Indexes of the parameters whose bindings the expression uses, ascending.
     pub uses: Vec<usize>,
+    /// The reserved names the expression uses that no parameter of the method binds, so the
+    /// guard builds the view itself.
+    pub reserved: Vec<Reserved>,
 }
 
 /// Finds which parameters `expr` reads, by looking for the names their patterns bind.
+///
+/// `headers` and `query` are reserved: when the expression names one and no parameter binds it,
+/// the guard gets the view of the request head. A parameter of that name takes precedence.
 ///
 /// `self` is rejected: a guard runs before the controller is consulted and can only see what the
 /// method takes as parameters.
@@ -36,7 +55,22 @@ pub fn analyze<'a>(expr: &'a Expr, params: &[Param]) -> syn::Result<Analyzed<'a>
         .map(|(index, _)| index)
         .collect();
 
-    Ok(Analyzed { expr, uses })
+    let reserved = Reserved::ALL
+        .into_iter()
+        .filter(|(_, name)| {
+            let ident = Ident::new(name, proc_macro2::Span::call_site());
+
+            mentions(tokens.clone(), std::slice::from_ref(&ident))
+                && !params.iter().any(|param| param.bindings.contains(&ident))
+        })
+        .map(|(reserved, _)| reserved)
+        .collect();
+
+    Ok(Analyzed {
+        expr,
+        uses,
+        reserved,
+    })
 }
 
 /// The identifiers a pattern binds.

@@ -167,8 +167,8 @@ fn expand_variants_taking_the_same_type_share_one_slot() {
         },
     );
 
-    assert_eq!(out.matches("letmut__s").count(), 1);
-    assert!(out.contains("letmulti=false;"));
+    assert_eq!(out.matches("=::std::option::Option::None;").count(), 1);
+    assert!(out.contains("let__multi=false;"));
 }
 
 #[test]
@@ -186,7 +186,7 @@ fn expand_variants_taking_different_body_types_decide_buffering_at_runtime() {
         },
     );
 
-    assert_eq!(out.matches("letmut__s").count(), 2);
+    assert_eq!(out.matches("=::std::option::Option::None;").count(), 2);
     assert!(out.contains("uses_body::<A,_>()"));
     assert!(out.contains("uses_body::<B,_>()"));
 }
@@ -203,7 +203,7 @@ fn expand_single_body_type_never_buffers() {
         },
     );
 
-    assert!(out.contains("letmulti=false;"));
+    assert!(out.contains("let__multi=false;"));
 }
 
 #[test]
@@ -218,7 +218,7 @@ fn expand_last_guarded_variant_renders_a_guard_miss() {
         },
     );
 
-    assert!(out.contains("dispatch::guard_miss(parts,handler).await"));
+    assert!(out.contains("dispatch::guard_miss(__parts,__handler).await"));
 }
 
 #[test]
@@ -480,4 +480,111 @@ fn error_bad_route_path_points_at_the_path() {
     );
 
     assert!(message.contains("must start with `/`"));
+}
+
+#[test]
+fn expand_builds_the_reserved_views_inside_the_guard_that_names_them() {
+    let out = expand(
+        quote!(),
+        quote! {
+            impl Api {
+                #[get(when(headers.contains_key("x"), query.contains("y")))]
+                async fn a(&self) -> String { String::new() }
+            }
+        },
+    );
+
+    assert!(out.contains("letheaders=&__parts.headers;if!(headers.contains_key(\"x\"))"));
+    assert!(out.contains(
+        "letquery=::fast_http::core::QueryParams::of(__parts);if!(query.contains(\"y\"))"
+    ));
+}
+
+#[test]
+fn expand_builds_no_view_for_a_guard_that_does_not_name_it() {
+    let out = expand(
+        quote!(),
+        quote! {
+            impl Api {
+                #[get(when(q.x))]
+                async fn a(&self, q: QueryParams<'_>) -> String { String::new() }
+            }
+        },
+    );
+
+    assert!(!out.contains("letheaders="));
+    assert!(!out.contains("letquery="));
+}
+
+#[test]
+fn expand_a_parameter_with_the_reserved_name_takes_precedence() {
+    let out = expand(
+        quote!(),
+        quote! {
+            impl Api {
+                #[get(when(query.contains("y")))]
+                async fn a(&self, query: QueryParams<'_>) -> String { String::new() }
+            }
+        },
+    );
+
+    assert!(!out.contains("letquery=::fast_http::core::QueryParams::of"));
+    assert!(out.contains("letquery=match&__s0"));
+}
+
+#[test]
+fn expand_reserved_views_are_decided_per_variant() {
+    let out = expand(
+        quote!(),
+        quote! {
+            impl Api {
+                #[get(when(query.contains("y")))]
+                async fn a(&self) -> String { String::new() }
+
+                #[get(when(query.contains("z")))]
+                async fn b(&self, query: QueryParams<'_>) -> String { String::new() }
+            }
+        },
+    );
+
+    assert_eq!(
+        out.matches("letquery=::fast_http::core::QueryParams::of(__parts);")
+            .count(),
+        1
+    );
+    assert_eq!(out.matches("letquery=match&__s").count(), 1);
+}
+
+#[test]
+fn expand_guard_without_parameters_runs_before_any_extraction() {
+    let out = expand(
+        quote!(),
+        quote! {
+            impl Api {
+                #[post(when(query.contains("fast")))]
+                async fn a(&self, body: Body<Req>) -> String { String::new() }
+            }
+        },
+    );
+    let guard = position(&out, "if!(query.contains(\"fast\"))");
+    let body = position(&out, "extract_last::<Body<Req>");
+
+    assert!(guard < body);
+}
+
+#[test]
+fn expand_keeps_the_generated_locals_out_of_the_users_namespace() {
+    let out = expand(
+        quote!(),
+        quote! {
+            impl Api {
+                #[get(when(q.x))]
+                async fn a(&self, q: QueryParams<'_>) -> String { String::new() }
+            }
+        },
+    );
+
+    assert!(out.contains("__body:B"));
+    assert!(out.contains("__handler:&H"));
+    assert!(!out.contains(",body:B"));
 }

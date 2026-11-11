@@ -8,7 +8,7 @@ use super::{
     model::{Context, Handler, Param, Variant},
     partition::Partition,
 };
-use crate::guard::{Analyzed, analyze};
+use crate::guard::{Analyzed, Reserved, analyze};
 
 /// A step of a variant's plan: extract one argument, or evaluate one guard.
 enum Step {
@@ -57,7 +57,7 @@ pub fn dispatcher(
         .variants
         .last()
         .is_some_and(|variant| !variant.guards.is_empty());
-    let miss = last_guarded.then(|| quote!(#rt::guard_miss(parts, handler).await));
+    let miss = last_guarded.then(|| quote!(#rt::guard_miss(__parts, __handler).await));
     let slot_vars: Vec<_> = (0..table.types.len()).map(slot_var).collect();
     let multi = table.multi_expression(&rt);
     let method = format_ident!("{}", partition.method.constant());
@@ -79,14 +79,14 @@ pub fn dispatcher(
             #[allow(unused_variables, unused_mut)]
             async fn call<'r, B: #core::ReqBody, H: #core::ErrorHandler>(
                 &self,
-                parts: &'r #core::http::request::Parts,
-                params: #core::PathParams<'r>,
-                body: B,
-                handler: &H,
+                __parts: &'r #core::http::request::Parts,
+                __params: #core::PathParams<'r>,
+                __body: B,
+                __handler: &H,
             ) -> #core::Response {
-                let this = &self.this;
-                let multi = #multi;
-                let mut source = #rt::BodySource::new(body, multi);
+                let __this = &self.this;
+                let __multi = #multi;
+                let mut __source = #rt::BodySource::new(__body, __multi);
                 #( let mut #slot_vars = ::std::option::Option::None; )*
 
                 #(#blocks)*
@@ -247,9 +247,14 @@ fn variant_block(
         .into_iter()
         .map(|step| match step {
             Step::Extract(param) => extract_step(ctx, rt, handler, slots, param),
-            Step::Guard(guard) => {
-                guard_step(rt, &handler.params, slots, &guards[guard], label.as_ref())
-            }
+            Step::Guard(guard) => guard_step(
+                ctx,
+                rt,
+                &handler.params,
+                slots,
+                &guards[guard],
+                label.as_ref(),
+            ),
         })
         .collect();
     let call = call_step(ctx, rt, handler, slots);
@@ -271,19 +276,20 @@ fn extract_step(
     let slot = slot_var(slots[param]);
     let ty = &handler.params[param].ty;
     let make = if param + 1 == handler.params.len() {
-        quote!(#rt::extract_last::<#ty, _, _>(parts, &params, &mut source))
+        quote!(#rt::extract_last::<#ty, _, _>(__parts, &__params, &mut __source))
     } else {
-        quote!(async { #rt::extract_head::<#ty>(parts, &params) })
+        quote!(async { #rt::extract_head::<#ty>(__parts, &__params) })
     };
 
     quote! {
         if let ::std::result::Result::Err(error) = #rt::fill(&mut #slot, #make).await {
-            return #rt::fail(error, parts, handler).await;
+            return #rt::fail(error, __parts, __handler).await;
         }
     }
 }
 
 fn guard_step(
+    ctx: &Context,
     rt: &TokenStream,
     params: &[Param],
     slots: &[usize],
@@ -291,6 +297,11 @@ fn guard_step(
     label: Option<&Lifetime>,
 ) -> TokenStream {
     let expr = guard.expr;
+    let krate = ctx.krate;
+    let views = guard.reserved.iter().map(|reserved| match reserved {
+        Reserved::Headers => quote!(let headers = &__parts.headers;),
+        Reserved::Query => quote!(let query = #krate::core::QueryParams::of(__parts);),
+    });
     let lets = guard.uses.iter().map(|used| {
         let slot = slot_var(slots[*used]);
         let pat = binding_pattern(&params[*used].pat);
@@ -298,13 +309,14 @@ fn guard_step(
         quote! {
             let #pat = match &#slot {
                 ::std::option::Option::Some(value) => value,
-                ::std::option::Option::None => return #rt::unfilled(parts, handler).await,
+                ::std::option::Option::None => return #rt::unfilled(__parts, __handler).await,
             };
         }
     });
 
     quote! {
         {
+            #(#views)*
             #(#lets)*
 
             if !(#expr) {
@@ -330,7 +342,7 @@ fn call_step(ctx: &Context, rt: &TokenStream, handler: &Handler, slots: &[usize]
     let takes: Vec<_> = slots.iter().map(|slot| slot_var(*slot)).collect();
     let name = &handler.name;
     let call = if handler.receiver {
-        quote!(this.#name(#(#args),*))
+        quote!(__this.#name(#(#args),*))
     } else {
         let self_ty = ctx.self_ty;
 
@@ -339,9 +351,9 @@ fn call_step(ctx: &Context, rt: &TokenStream, handler: &Handler, slots: &[usize]
 
     quote! {
         let (#(::std::option::Option::Some(#args),)*) = (#(#takes.take(),)*) else {
-            return #rt::unfilled(parts, handler).await;
+            return #rt::unfilled(__parts, __handler).await;
         };
 
-        return #rt::finish(#call.await, parts, handler).await;
+        return #rt::finish(#call.await, __parts, __handler).await;
     }
 }

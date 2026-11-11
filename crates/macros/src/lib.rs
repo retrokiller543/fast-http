@@ -37,7 +37,9 @@ use proc_macro::TokenStream;
 /// - Endpoints that share a method and path form one route, tried in declaration order.
 ///   `when(..)` holds boolean Rust expressions over the method's own parameters, all of which
 ///   must hold. Parameters are borrowed in a guard and the expression is emitted as written, so
-///   the editor highlights and checks it. A guard cannot use `self`.
+///   the editor highlights and checks it. `headers` and `query` are reserved: a guard that uses
+///   one without the method declaring a parameter of that name gets the request's `&HeaderMap`
+///   or a `QueryParams` view. A guard cannot use `self`.
 ///
 /// Guarded variants compile to one generated endpoint that does as little work as possible:
 /// arguments are extracted in the order the guards need them, a type that several variants take is
