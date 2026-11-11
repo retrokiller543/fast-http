@@ -5,7 +5,8 @@ use fast_http_core::{
 /// Runs `flow` only for requests whose path lies under `prefix`; every other request skips it.
 ///
 /// The prefix matches on a segment boundary, so `/api` covers `/api` and `/api/users` but not
-/// `/apiary`. An empty prefix covers every path.
+/// `/apiary`. A trailing `/` is ignored, so `/api/` behaves like `/api`, and an empty prefix or `/`
+/// covers every path.
 #[derive(Debug, Clone, Copy)]
 pub struct Scope<F> {
     prefix: &'static str,

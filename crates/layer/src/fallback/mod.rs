@@ -64,8 +64,10 @@ impl<N: Next, Bd: ReqBody> Next for Forward<'_, N, Bd> {
     async fn run<B: ReqBody>(self, req: Request<B>) -> Response {
         let held = take(self.cell).expect("a continuation is consumed by running it");
         let (mut head, _) = req.into_parts();
+        let mut extensions = held.parts.extensions;
 
-        head.extensions.extend(held.parts.extensions);
+        extensions.extend(std::mem::take(&mut head.extensions));
+        head.extensions = extensions;
 
         held.next.run(Request::from_parts(head, held.body)).await
     }
