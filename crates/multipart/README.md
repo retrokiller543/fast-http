@@ -7,20 +7,29 @@ Streaming `multipart/form-data` extraction for fast-http, shaped after `axum::ex
 ## Usage
 
 ```rust
-async fn upload(mut form: Multipart) -> Result<String, MultipartError> {
+use fast_http_core::HandlerError;
+use tokio::{fs::File, io::AsyncWriteExt};
+
+async fn upload(mut form: Multipart) -> Result<String, HandlerError> {
     let mut names = Vec::new();
 
     while let Some(mut field) = form.next_field().await? {
+        let mut file = File::create(format!("uploads/{}", names.len()))
+            .await
+            .map_err(HandlerError::internal)?;
+
         names.push(field.name().unwrap_or("-").to_owned());
 
         while let Some(chunk) = field.chunk().await? {
-            sink.write_all(&chunk).await?;
+            file.write_all(&chunk).await.map_err(HandlerError::internal)?;
         }
     }
 
     Ok(names.join(","))
 }
 ```
+
+A `MultipartError` converts into `HandlerError` with its own status through `?`; an I/O error becomes an opaque `500` through `HandlerError::internal`. Each `field` is dropped at the end of its loop iteration, which is what lets `next_field` move on: a field must be dropped before the next one is read, even after `chunk()` returned `None`.
 
 - `Multipart` is a body extractor, so it is the last handler argument.
 - `Multipart<WHOLE, FIELD>` caps the whole body and each field, in bytes (both default to 8 MiB, the framework's `DEFAULT_BODY_LIMIT`). Exceeding either gives `MultipartError::TooLarge` (413).
