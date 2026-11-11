@@ -1,4 +1,4 @@
-use proc_macro2::{TokenStream, TokenTree};
+use proc_macro2::{Spacing, TokenStream, TokenTree};
 use quote::ToTokens;
 use syn::{Error, Expr, Ident, Pat};
 
@@ -110,12 +110,51 @@ fn collect(pat: &Pat, found: &mut Vec<Ident>) {
     }
 }
 
+/// Whether `tokens` use one of `names` as a binding.
+///
+/// The tokens are scanned rather than parsed, because guards are often macro calls such as
+/// `matches!(..)` whose arguments are not expressions. A name right after `.` or `::` is a field,
+/// method or path segment, as in `headers.contains_key(..)`, and a name right before a lone `:`
+/// is a field, as in `Job::Fast { id: 0, .. }`; neither refers to a binding.
 fn mentions(tokens: TokenStream, names: &[Ident]) -> bool {
-    tokens.into_iter().any(|token| match token {
-        TokenTree::Ident(ident) => names.contains(&ident),
+    let tokens: Vec<_> = tokens.into_iter().collect();
+
+    tokens.iter().enumerate().any(|(index, token)| match token {
+        TokenTree::Ident(ident) => {
+            names.contains(ident)
+                && !is_member(&tokens[..index])
+                && !is_field_name(tokens.get(index + 1))
+        }
         TokenTree::Group(group) => mentions(group.stream(), names),
         _ => false,
     })
+}
+
+/// Whether the tokens before a name make it a member or path segment: they end in a `.` that is
+/// not part of `..`, or in `::`.
+fn is_member(before: &[TokenTree]) -> bool {
+    let punct = |token: Option<&TokenTree>, ch: char| matches!(token, Some(TokenTree::Punct(punct)) if punct.as_char() == ch);
+    let joint = |token: Option<&TokenTree>, ch: char| {
+        matches!(
+            token,
+            Some(TokenTree::Punct(punct)) if punct.as_char() == ch && punct.spacing() == Spacing::Joint
+        )
+    };
+    let last = before.last();
+    let previous = before
+        .len()
+        .checked_sub(2)
+        .and_then(|index| before.get(index));
+
+    (punct(last, '.') && !joint(previous, '.')) || (punct(last, ':') && joint(previous, ':'))
+}
+
+/// Whether the token after a name makes it a field name: a `:` that does not start `::`.
+fn is_field_name(next: Option<&TokenTree>) -> bool {
+    matches!(
+        next,
+        Some(TokenTree::Punct(punct)) if punct.as_char() == ':' && punct.spacing() == Spacing::Alone
+    )
 }
 
 #[cfg(test)]

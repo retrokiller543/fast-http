@@ -54,6 +54,9 @@ pub struct RouteAttr {
     /// Syntax errors in guards, which are reported next to a full expansion instead of replacing
     /// it, so the editor keeps its view of everything else.
     pub errors: Vec<syn::Error>,
+    /// `crate = path` on a standalone function: the crate the expansion refers to, for a renamed
+    /// dependency.
+    pub krate: Option<syn::Path>,
 }
 
 impl RouteAttr {
@@ -100,6 +103,7 @@ impl RouteAttr {
             guards: Vec::new(),
             when_text: String::new(),
             errors: Vec::new(),
+            krate: None,
         }
     }
 
@@ -134,30 +138,54 @@ impl RouteAttr {
         let mut guards = Vec::new();
         let mut when_text = String::new();
         let mut errors = Vec::new();
+        let mut krate = None;
 
-        if !input.is_empty() {
-            let keyword: Ident = input.parse()?;
+        while !input.is_empty() {
+            if input.peek(Token![crate]) {
+                let keyword = input.parse::<Token![crate]>()?;
 
-            if keyword != "when" {
-                return Err(syn::Error::new_spanned(keyword, "expected `when(..)`"));
+                if krate.is_some() {
+                    return Err(syn::Error::new_spanned(keyword, "`crate` is given twice"));
+                }
+
+                input.parse::<Token![=]>()?;
+                krate = Some(input.parse()?);
+            } else {
+                let keyword: Ident = input.parse()?;
+
+                if keyword != "when" {
+                    return Err(syn::Error::new_spanned(
+                        keyword,
+                        "expected `when(..)` or `crate = path`",
+                    ));
+                }
+
+                if !guards.is_empty() {
+                    return Err(syn::Error::new_spanned(
+                        keyword,
+                        "`when(..)` is given twice",
+                    ));
+                }
+
+                let content;
+
+                parenthesized!(content in input);
+                when_text = content.fork().parse::<TokenStream>()?.to_string();
+                guards = parse_guards(&content, &mut errors);
+
+                if guards.is_empty() {
+                    return Err(syn::Error::new_spanned(
+                        keyword,
+                        "`when(..)` needs a condition",
+                    ));
+                }
             }
 
-            let content;
-
-            parenthesized!(content in input);
-            when_text = content.fork().parse::<TokenStream>()?.to_string();
-            guards = parse_guards(&content, &mut errors);
-
-            if guards.is_empty() {
-                return Err(syn::Error::new_spanned(
-                    keyword,
-                    "`when(..)` needs a condition",
-                ));
+            if input.is_empty() {
+                break;
             }
-        }
 
-        if !input.is_empty() {
-            return Err(input.error("unexpected tokens after the route attribute arguments"));
+            input.parse::<Token![,]>()?;
         }
 
         Ok(Self {
@@ -166,6 +194,7 @@ impl RouteAttr {
             guards,
             when_text,
             errors,
+            krate,
         })
     }
 }

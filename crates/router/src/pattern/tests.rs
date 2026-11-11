@@ -152,6 +152,8 @@ fn cmp_specificity_puts_literals_before_params_before_wildcards() {
 fn same_shape_ignores_parameter_names_only() {
     assert!(parse("/a/{id}").same_shape(&parse("/a/{key}")));
     assert!(parse("/a/**").same_shape(&parse("/a/{**rest}")));
+    assert!(parse("/a/{id}").same_shape(&parse("/a/*")));
+    assert!(!parse("/a/*").same_shape(&parse("/a/**")));
     assert!(!parse("/a/{id}").same_shape(&parse("/a/b")));
     assert!(!parse("/a").same_shape(&parse("/b")));
 }

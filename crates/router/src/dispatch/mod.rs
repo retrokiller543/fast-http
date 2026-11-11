@@ -3,7 +3,7 @@
 //!
 //! A generated endpoint extracts each distinct argument type at most once, evaluates the guards
 //! as soon as the arguments they use exist, and hands the winning handler the values it already
-//! extracted. Nothing here allocates and the request body is never buffered: every variant that
+//! extracted. Nothing here allocates and the endpoint never buffers the request body: every variant that
 //! reads it takes the same body type, which is parsed lazily, once.
 
 use fast_http_core::{

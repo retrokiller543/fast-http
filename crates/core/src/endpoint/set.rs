@@ -26,6 +26,9 @@ pub trait EndpointSet: Send + Sync + 'static {
     /// Chooses an endpoint from `from` on, using the head, and the body once it is available.
     fn select(&self, from: usize, parts: &Parts, body: Option<&Bytes>) -> Selection;
 
+    /// [`Endpoint::guards_read_body`] of the endpoint at `index`.
+    fn guards_read_body(&self, index: usize) -> bool;
+
     /// Offers the request to the endpoint at `index`, which must come from [`EndpointSet::select`].
     fn attempt<'r, B: ReqBody, H: ErrorHandler>(
         &'r self,
@@ -102,6 +105,10 @@ impl EndpointSet for () {
         Selection::Rejected(Rejection::MethodNotAllowed { allow: Vec::new() })
     }
 
+    fn guards_read_body(&self, _: usize) -> bool {
+        false
+    }
+
     async fn attempt<'r, B: ReqBody, H: ErrorHandler>(
         &'r self,
         _: usize,
@@ -132,6 +139,13 @@ macro_rules! endpoint_set {
                 )+
 
                 rejection(method_seen, &methods, http::StatusCode::BAD_REQUEST)
+            }
+
+            fn guards_read_body(&self, index: usize) -> bool {
+                match index {
+                    $($index => self.$index.guards_read_body(),)+
+                    _ => false,
+                }
             }
 
             fn attempt<'r, Bd: ReqBody, Eh: ErrorHandler>(

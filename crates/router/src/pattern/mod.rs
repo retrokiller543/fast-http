@@ -183,7 +183,8 @@ impl Pattern {
             .cmp(other.segments.iter().map(Segment::rank))
     }
 
-    /// Whether both patterns match exactly the same paths, whatever their parameters are named.
+    /// Whether both patterns match exactly the same paths, whatever their parameters are named;
+    /// `{param}` and `*` match the same single segment, so they count as the same.
     pub fn same_shape(&self, other: &Self) -> bool {
         self.segments.len() == other.segments.len()
             && self
@@ -192,9 +193,7 @@ impl Pattern {
                 .zip(&other.segments)
                 .all(|pair| match pair {
                     (Segment::Literal(left), Segment::Literal(right)) => left == right,
-                    (left, right) => {
-                        !matches!(left, Segment::Literal(_)) && left.rank() == right.rank()
-                    }
+                    (left, right) => left.matched() == right.matched(),
                 })
     }
 
@@ -245,7 +244,23 @@ impl Pattern {
     }
 }
 
+/// What a segment matches, regardless of whether it captures it.
+#[derive(PartialEq, Eq)]
+enum Matched {
+    Literal,
+    One,
+    Rest,
+}
+
 impl Segment {
+    fn matched(&self) -> Matched {
+        match self {
+            Self::Literal(_) => Matched::Literal,
+            Self::Param(_) | Self::Any => Matched::One,
+            Self::Rest(_) => Matched::Rest,
+        }
+    }
+
     fn rank(&self) -> u8 {
         match self {
             Self::Literal(_) => 0,

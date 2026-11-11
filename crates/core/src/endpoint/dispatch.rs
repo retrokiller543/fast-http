@@ -3,8 +3,8 @@ use http::{StatusCode, request::Parts};
 use http_body_util::Full;
 
 use crate::{
-    Attempt, DEFAULT_BODY_LIMIT, EndpointSet, ErrorHandler, HandlerError, PathParams, ReqBody,
-    Response, Selection, body::buffer,
+    Attempt, DEFAULT_BODY_LIMIT, EndpointSet, ErrorHandler, HandlerError, PathParams, Rejection,
+    ReqBody, Response, Selection, body::buffer,
 };
 
 /// Limits and fallbacks applied while dispatching to an [`EndpointSet`].
@@ -26,7 +26,12 @@ impl Default for DispatchOptions {
     }
 }
 
-/// Selects and calls an endpoint, buffering the body once if a body guard needs it and rendering rejections.
+/// Selects and calls an endpoint, rendering rejections.
+///
+/// The body streams to the endpoint that takes the request. It is buffered, once, only when an
+/// endpoint needs the bytes for a guard, or when an endpoint whose guards read the body could miss
+/// while a later endpoint might still take the request; from then on every endpoint tried gets
+/// its own replay of the bytes.
 pub async fn dispatch_set<S, B, H>(
     set: &S,
     parts: &Parts,
@@ -40,73 +45,104 @@ where
     B: ReqBody,
     H: ErrorHandler,
 {
-    let selection = set.select(0, parts, None);
+    let (from, body) = match stream(set, parts, params, body, handler, options).await {
+        Ok(response) => return response,
+        Err(pending) => pending,
+    };
+    let bytes = match buffer(body, options.body_limit).await {
+        Ok(bytes) => bytes,
+        Err(rejection) => return handler.handle(HandlerError::new(rejection), parts).await,
+    };
 
-    if selection == Selection::NeedBody {
-        let bytes = match buffer(body, options.body_limit).await {
-            Ok(bytes) => bytes,
-            Err(rejection) => return handler.handle(HandlerError::new(rejection), parts).await,
-        };
-        let selection = set.select(0, parts, Some(&bytes));
-
-        return run(
-            set,
-            selection,
-            parts,
-            params,
-            Full::<Bytes>::new(bytes.clone()),
-            handler,
-            options,
-            |from| set.select(from, parts, Some(&bytes)),
-        )
-        .await;
-    }
-
-    run(
-        set,
-        selection,
-        parts,
-        params,
-        body,
-        handler,
-        options,
-        |from| set.select(from, parts, None),
-    )
-    .await
+    replay(set, from, parts, params, &bytes, handler, options).await
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn run<S: EndpointSet, B: ReqBody, H: ErrorHandler>(
+/// Tries endpoints on the streaming body; `Err` hands back where to resume once it is buffered.
+async fn stream<S: EndpointSet, B: ReqBody, H: ErrorHandler>(
     set: &S,
-    mut selection: Selection,
     parts: &Parts,
     params: PathParams<'_>,
     mut body: B,
     handler: &H,
     options: DispatchOptions,
-    reselect: impl Fn(usize) -> Selection,
+) -> Result<Response, (usize, B)> {
+    let mut from = 0;
+
+    loop {
+        let index = match set.select(from, parts, None) {
+            Selection::Selected(index) => index,
+            Selection::NeedBody => return Err((from, body)),
+            Selection::Rejected(rejection) => {
+                return Ok(reject(rejection, parts, handler, options).await);
+            }
+        };
+
+        if set.guards_read_body(index) && later_applies(set, index, parts) {
+            return Err((index, body));
+        }
+
+        match set.attempt(index, parts, params, body, handler).await {
+            Attempt::Done(response) => return Ok(response),
+            Attempt::Declined(returned) => {
+                body = returned;
+                from = index + 1;
+            }
+            Attempt::Missed => return Ok(missed(parts, handler, options).await),
+        }
+    }
+}
+
+/// Tries endpoints from `from` on, giving each a fresh replay of the buffered body.
+async fn replay<S: EndpointSet, H: ErrorHandler>(
+    set: &S,
+    mut from: usize,
+    parts: &Parts,
+    params: PathParams<'_>,
+    bytes: &Bytes,
+    handler: &H,
+    options: DispatchOptions,
 ) -> Response {
     loop {
-        match selection {
-            Selection::Selected(index) => {
-                match set.attempt(index, parts, params, body, handler).await {
-                    Attempt::Done(response) => return response,
-                    Attempt::Declined(returned) => {
-                        body = returned;
-                        selection = reselect(index + 1);
-                    }
-                }
-            }
+        let index = match set.select(from, parts, Some(bytes)) {
+            Selection::Selected(index) => index,
             Selection::Rejected(rejection) => {
-                let rejection = rejection.with_guard_miss(options.guard_miss);
-
-                return handler.handle(HandlerError::new(rejection), parts).await;
+                return reject(rejection, parts, handler, options).await;
             }
             Selection::NeedBody => {
                 let error = HandlerError::internal("endpoint asked for the body twice");
 
                 return handler.handle(error, parts).await;
             }
+        };
+        let body = Full::new(bytes.clone());
+
+        match set.attempt(index, parts, params, body, handler).await {
+            Attempt::Done(response) => return response,
+            Attempt::Declined(_) | Attempt::Missed => from = index + 1,
         }
     }
+}
+
+/// Whether an endpoint after `index` could still take the request, judged by the head alone.
+fn later_applies<S: EndpointSet>(set: &S, index: usize, parts: &Parts) -> bool {
+    !matches!(set.select(index + 1, parts, None), Selection::Rejected(_))
+}
+
+async fn reject<H: ErrorHandler>(
+    rejection: Rejection,
+    parts: &Parts,
+    handler: &H,
+    options: DispatchOptions,
+) -> Response {
+    let rejection = rejection.with_guard_miss(options.guard_miss);
+
+    handler.handle(HandlerError::new(rejection), parts).await
+}
+
+async fn missed<H: ErrorHandler>(parts: &Parts, handler: &H, options: DispatchOptions) -> Response {
+    let rejection = Rejection::GuardMiss {
+        status: options.guard_miss,
+    };
+
+    handler.handle(HandlerError::new(rejection), parts).await
 }

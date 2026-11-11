@@ -154,3 +154,21 @@ fn is_route_recognizes_the_general_form() {
     assert!(RouteAttr::is_route(&parse_quote!(#[get("/a")])));
     assert!(!RouteAttr::is_route(&parse_quote!(#[doc = "x"])));
 }
+
+#[test]
+fn parse_crate_override_in_any_position() {
+    let before = parse(parse_quote!(#[get("/a", crate = ::web, when(a.x))])).expect("parses");
+    let after = parse(parse_quote!(#[get(when(a.x), crate = ::web)])).expect("parses");
+
+    for route in [before, after] {
+        let krate = route.krate.expect("crate is set");
+
+        assert_eq!(quote::quote!(#krate).to_string(), ":: web");
+        assert_eq!(route.guards.len(), 1);
+    }
+}
+
+#[test]
+fn parse_crate_given_twice_is_an_error() {
+    assert!(failure(parse_quote!(#[get(crate = ::a, crate = ::b)])).contains("given twice"));
+}

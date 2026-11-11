@@ -103,6 +103,14 @@ fn route_with_the_shape_of_an_earlier_one_is_refused() {
 }
 
 #[test]
+#[should_panic(expected = "matches the same paths as `/items/{id}`")]
+fn wildcard_route_with_the_shape_of_a_param_route_is_refused() {
+    let _ = Router::new()
+        .route(Route::new("/items/{id}").expect("valid pattern").get(any))
+        .route(Route::new("/items/*").expect("valid pattern").post(any));
+}
+
+#[test]
 #[should_panic(expected = "matches the same paths as `/r0`")]
 fn merged_route_with_the_shape_of_an_existing_one_is_refused() {
     let _ = numbered!(Router::new(); 0).merge(numbered!(Router::new(); 0));

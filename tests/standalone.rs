@@ -46,6 +46,43 @@ async fn echo<'a>(Path(name): Path<&'a str>) -> &'a str {
     name
 }
 
+#[derive(serde::Deserialize)]
+struct Ticket {
+    id: u64,
+    priority: bool,
+}
+
+#[post("/tickets", when(ticket.priority))]
+async fn priority_ticket(ticket: fast_http::format::Body<Ticket>) -> String {
+    format!("priority:{}", ticket.id)
+}
+
+#[post("/tickets")]
+async fn queued_ticket(ticket: fast_http::format::Body<Ticket>) -> String {
+    format!("queued:{}", ticket.id)
+}
+
+#[routes("/gated")]
+mod gated {
+    #[cfg(any())]
+    #[get("/gone")]
+    async fn gone() -> &'static str {
+        "gone"
+    }
+
+    #[cfg(any())]
+    #[delete("/kept")]
+    async fn remove() -> &'static str {
+        "removed"
+    }
+
+    #[cfg(test)]
+    #[get("/kept")]
+    async fn kept() -> &'static str {
+        "kept"
+    }
+}
+
 #[routes("/borrowed")]
 mod borrowed {
     use fast_http::core::Path;
@@ -322,4 +359,63 @@ async fn module_variants_may_return_borrowed_data_and_name_lifetimes() {
 async fn lone_function_exposes_its_attribute_path() {
     assert_eq!(deep_full::PATH, "/deep");
     assert_eq!(general::PATH, "/general");
+}
+
+#[tokio::test]
+async fn lone_functions_fall_through_after_a_body_guard_misses() {
+    let router = Router::new().route(endpoints![priority_ticket, queued_ticket]);
+    let json = [("content-type", "application/json")];
+
+    let priority = send(
+        &router,
+        Method::POST,
+        "/tickets",
+        &json,
+        r#"{"id":1,"priority":true}"#,
+    )
+    .await;
+    let queued = send(
+        &router,
+        Method::POST,
+        "/tickets",
+        &json,
+        r#"{"id":2,"priority":false}"#,
+    )
+    .await;
+
+    assert_eq!(priority.1, "priority:1");
+    assert_eq!(queued.1, "queued:2");
+}
+
+#[tokio::test]
+async fn body_guard_miss_answers_with_the_configured_status() {
+    let options = fast_http::core::DispatchOptions {
+        guard_miss: StatusCode::UNPROCESSABLE_ENTITY,
+        ..fast_http::core::DispatchOptions::default()
+    };
+    let router = Router::new().route(priority_ticket).with_options(options);
+
+    let (status, _) = send(
+        &router,
+        Method::POST,
+        "/tickets",
+        &[("content-type", "application/json")],
+        r#"{"id":3,"priority":false}"#,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn routes_module_leaves_out_handlers_whose_cfg_is_off() {
+    let router = gated::routes().expect("valid routes");
+
+    let gone = send(&router, Method::GET, "/gated/gone", &[], "").await;
+    let kept = send(&router, Method::GET, "/gated/kept", &[], "").await;
+    let removed = send(&router, Method::DELETE, "/gated/kept", &[], "").await;
+
+    assert_eq!(gone.0, StatusCode::NOT_FOUND);
+    assert_eq!(kept.1, "kept");
+    assert_eq!(removed.0, StatusCode::METHOD_NOT_ALLOWED);
 }

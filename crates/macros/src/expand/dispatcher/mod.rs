@@ -1,14 +1,16 @@
-use std::collections::{BTreeSet, HashMap};
-
-use proc_macro2::{Span, TokenStream};
+use proc_macro2::TokenStream;
 use quote::{ToTokens, format_ident, quote};
-use syn::{Ident, Lifetime, Pat, Type};
+use syn::{Attribute, Error, Ident, Type};
 
+use self::{slots::SlotTable, steps::variant_block};
 use super::{
-    model::{Context, Handler, Variant},
+    model::{Context, Handler},
     partition::Partition,
 };
-use crate::guard::{Analyzed, Reserved, analyze};
+use crate::guard::analyze;
+
+mod slots;
+mod steps;
 
 /// How the generated endpoint struct is named and exposed.
 pub struct Naming {
@@ -38,6 +40,8 @@ pub struct Dispatcher {
     pub items: TokenStream,
     /// The expression that constructs the endpoint inside `routes`.
     pub expr: TokenStream,
+    /// The `#[cfg(..)]` attributes of its handlers, which gate it and its registration.
+    pub cfgs: Vec<Attribute>,
 }
 
 /// Generates one endpoint that picks among `partition`'s variants.
@@ -120,13 +124,18 @@ pub fn dispatcher(
         None => (quote!(;), TokenStream::new(), quote!(#name)),
     };
     let hidden = derived.then(|| quote!(#[doc(hidden)]));
+    let cfgs = shared_cfgs(handlers, partition)?;
+    let guards_read_body = guards_read_body(&rt, handlers, partition)?;
     let items = quote! {
+        #(#cfgs)*
         #early_rule
 
+        #(#cfgs)*
         #hidden
         #[allow(non_camel_case_types)]
         #vis struct #name #impl_generics #where_clause #fields
 
+        #(#cfgs)*
         impl #impl_generics #core::Endpoint for #name #type_generics #where_clause {
             fn method(&self) -> &#core::http::Method {
                 &#core::http::Method::#method
@@ -141,11 +150,13 @@ pub fn dispatcher(
             ) -> #core::Response {
                 match self.attempt(__parts, __params, __body, __handler).await {
                     #core::Attempt::Done(response) => response,
-                    #core::Attempt::Declined(_) => {
+                    #core::Attempt::Declined(_) | #core::Attempt::Missed => {
                         #rt::fail(#rt::guard_miss(), __parts, __handler).await
                     }
                 }
             }
+
+            #guards_read_body
 
             #[allow(unused_variables, unused_mut)]
             async fn attempt<'__r, __B: #core::ReqBody, __H: #core::ErrorHandler>(
@@ -177,9 +188,7 @@ pub fn dispatcher(
                     ::std::result::Result::Ok(::std::option::Option::None) => {
                         match __source.into_unread() {
                             ::std::option::Option::Some(body) => #core::Attempt::Declined(body),
-                            ::std::option::Option::None => #core::Attempt::Done(
-                                __rt::fail(__rt::guard_miss(), __parts, __handler).await,
-                            ),
+                            ::std::option::Option::None => #core::Attempt::Missed,
                         }
                     }
                     ::std::result::Result::Err(error) => {
@@ -193,7 +202,77 @@ pub fn dispatcher(
     Ok(Dispatcher {
         items,
         expr: construct,
+        cfgs,
     })
+}
+
+/// The `#[cfg(..)]` attributes of the handlers in `partition`, which must all be the same, since
+/// one endpoint calls every one of them.
+fn shared_cfgs(handlers: &[Handler], partition: &Partition) -> syn::Result<Vec<Attribute>> {
+    let mut variants = partition
+        .variants
+        .iter()
+        .map(|variant| &handlers[variant.handler]);
+    let Some(first) = variants.next() else {
+        return Ok(Vec::new());
+    };
+    let key = |handler: &Handler| {
+        handler
+            .cfgs
+            .iter()
+            .map(|cfg| cfg.to_token_stream().to_string())
+            .collect::<Vec<_>>()
+    };
+    let expected = key(first);
+
+    for handler in variants {
+        if key(handler) != expected {
+            return Err(Error::new_spanned(
+                &handler.name,
+                format!(
+                    "`{}` and `{}` answer the same method and path, so they need the same #[cfg(..)] attributes",
+                    first.name, handler.name
+                ),
+            ));
+        }
+    }
+
+    Ok(first.cfgs.clone())
+}
+
+/// `Endpoint::guards_read_body`, when a guard of some variant uses that variant's last argument,
+/// which is the one that may read the body.
+fn guards_read_body(
+    rt: &TokenStream,
+    handlers: &[Handler],
+    partition: &Partition,
+) -> syn::Result<Option<TokenStream>> {
+    let mut types = Vec::new();
+
+    for variant in &partition.variants {
+        let handler = &handlers[variant.handler];
+        let Some(last) = handler.params.len().checked_sub(1) else {
+            continue;
+        };
+
+        for guard in &variant.guards {
+            if analyze(guard, &handler.params)?.uses.contains(&last) {
+                types.push(&handler.params[last].ty);
+
+                break;
+            }
+        }
+    }
+
+    if types.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(quote! {
+        fn guards_read_body(&self) -> bool {
+            false #(|| #rt::uses_body::<#types, _>())*
+        }
+    }))
 }
 
 fn struct_name(ctx: &Context, handlers: &[Handler], partition: &Partition, index: usize) -> Ident {
@@ -227,207 +306,4 @@ fn slot_var(index: usize) -> Ident {
 
 fn arg_var(index: usize) -> Ident {
     format_ident!("__a{index}")
-}
-
-struct SlotTable<'a> {
-    types: Vec<&'a Type>,
-    per_variant: Vec<Vec<usize>>,
-    last_slots: BTreeSet<usize>,
-}
-
-impl<'a> SlotTable<'a> {
-    fn build(handlers: &'a [Handler], variants: &[&Variant]) -> Self {
-        let mut keys: Vec<String> = Vec::new();
-        let mut types: Vec<&Type> = Vec::new();
-        let mut per_variant = Vec::new();
-        let mut last_slots = BTreeSet::new();
-
-        for variant in variants {
-            let handler = &handlers[variant.handler];
-            let mut seen: HashMap<String, usize> = HashMap::new();
-            let mut slots = Vec::new();
-
-            for param in &handler.params {
-                let base = param.ty.to_token_stream().to_string();
-                let occurrence = seen.entry(base.clone()).or_insert(0);
-                let key = format!("{base}#{occurrence}");
-
-                *occurrence += 1;
-
-                let slot = keys
-                    .iter()
-                    .position(|known| *known == key)
-                    .unwrap_or_else(|| {
-                        keys.push(key);
-                        types.push(&param.ty);
-
-                        keys.len() - 1
-                    });
-
-                slots.push(slot);
-            }
-
-            if let Some(last) = slots.last() {
-                last_slots.insert(*last);
-            }
-
-            per_variant.push(slots);
-        }
-
-        Self {
-            types,
-            per_variant,
-            last_slots,
-        }
-    }
-
-    fn slots(&self, variant: usize) -> &[usize] {
-        &self.per_variant[variant]
-    }
-
-    /// The assertion that at most one body type is read, when more than one type could be.
-    fn body_rule(&self, rt: &TokenStream) -> Option<TokenStream> {
-        if self.last_slots.len() < 2 {
-            return None;
-        }
-
-        let terms = self.last_slots.iter().map(|slot| {
-            let ty = self.types[*slot];
-
-            quote!((#rt::uses_body::<#ty, _>() as ::std::primitive::usize))
-        });
-
-        Some(quote! {
-            ::std::assert!(
-                0_usize #(+ #terms)* <= 1,
-                "variants of one method and path that read the request body must all take the same body type; define one enum for the body and guard on its variants"
-            )
-        })
-    }
-}
-
-fn variant_block(
-    ctx: &Context,
-    rt: &TokenStream,
-    handlers: &[Handler],
-    variant: &Variant,
-    slots: &[usize],
-    index: usize,
-) -> syn::Result<TokenStream> {
-    let handler = &handlers[variant.handler];
-    let guards = variant
-        .guards
-        .iter()
-        .map(|expr| analyze(expr, &handler.params))
-        .collect::<syn::Result<Vec<_>>>()?;
-    let label =
-        (!guards.is_empty()).then(|| Lifetime::new(&format!("'__v{index}"), Span::call_site()));
-    let steps: Vec<_> = guards
-        .iter()
-        .map(|guard| guard_step(ctx, rt, handler, slots, guard, label.as_ref()))
-        .collect();
-    let call = call_step(ctx, rt, handler, slots);
-
-    Ok(match label {
-        Some(label) => quote!(#label: { #(#steps)* #call }),
-        None => quote!({ #(#steps)* #call }),
-    })
-}
-
-/// The expression that extracts parameter `param`, which is only run when its slot is empty.
-fn extraction(rt: &TokenStream, handler: &Handler, param: usize) -> TokenStream {
-    let ty = &handler.params[param].ty;
-
-    if param + 1 == handler.params.len() {
-        quote!(#rt::extract_last::<#ty, _, _>(__parts, &__params, &mut __source))
-    } else {
-        quote!(async { #rt::extract_head::<#ty>(__parts, &__params) })
-    }
-}
-
-fn guard_step(
-    ctx: &Context,
-    rt: &TokenStream,
-    handler: &Handler,
-    slots: &[usize],
-    guard: &Analyzed,
-    label: Option<&Lifetime>,
-) -> TokenStream {
-    let expr = guard.expr;
-    let krate = ctx.krate;
-    let views = guard.reserved.iter().map(|reserved| match reserved {
-        Reserved::Headers => quote!(let headers = &__parts.headers;),
-        Reserved::Query => quote!(let query = #krate::core::QueryParams::of(__parts);),
-    });
-    let lets = guard.uses.iter().map(|used| {
-        let slot = slot_var(slots[*used]);
-        let make = extraction(rt, handler, *used);
-        let fill = quote!(#rt::fill(&mut #slot, #make).await?);
-
-        match plain_binding(&handler.params[*used].pat) {
-            Some(name) => quote! {
-                let #name = {
-                    use #rt::{ViewInner as _, ViewSelf as _};
-
-                    (&#rt::Guarded(#fill)).view()
-                };
-            },
-            None => {
-                let pat = &handler.params[*used].pat;
-
-                quote!(let #pat = #fill;)
-            }
-        }
-    });
-
-    quote! {
-        {
-            #(#views)*
-            #(#lets)*
-
-            if !(#expr) {
-                break #label;
-            }
-        }
-    }
-}
-
-/// The name a parameter is bound to when it is a plain name, such as `job` in `job: Body<Job>`.
-///
-/// A guard sees such a parameter through `fast_http_core::Transparent` when its
-/// extractor is one, so `job` reads as `&Job`. A destructuring pattern, such as `Query(params)`,
-/// is bound as written instead.
-fn plain_binding(pat: &Pat) -> Option<&Ident> {
-    match pat {
-        Pat::Ident(ident) if ident.subpat.is_none() => Some(&ident.ident),
-        _ => None,
-    }
-}
-
-fn call_step(ctx: &Context, rt: &TokenStream, handler: &Handler, slots: &[usize]) -> TokenStream {
-    let args: Vec<_> = (0..handler.params.len()).map(arg_var).collect();
-    let takes = args.iter().enumerate().map(|(param, arg)| {
-        let slot = slot_var(slots[param]);
-        let make = extraction(rt, handler, param);
-
-        quote!(let #arg = #rt::take(&mut #slot, #make).await?;)
-    });
-    let name = &handler.name;
-    let call = match (&ctx.owner, handler.receiver) {
-        (_, true) => quote!(__this.#name(#(#args),*)),
-        (Some(owner), false) => {
-            let self_ty = owner.self_ty;
-
-            quote!(<#self_ty>::#name(#(#args),*))
-        }
-        (None, false) => quote!(#name(#(#args),*)),
-    };
-
-    quote! {
-        #(#takes)*
-
-        return ::std::result::Result::Ok(::std::option::Option::Some(
-            #rt::finish(#call.await, __parts, __handler).await,
-        ));
-    }
 }

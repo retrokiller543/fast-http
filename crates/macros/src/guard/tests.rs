@@ -121,3 +121,27 @@ fn analyze_unrelated_names_are_not_reserved() {
 
     assert!(analyze(&expr, &[]).expect("analyzes").reserved.is_empty());
 }
+
+#[test]
+fn analyze_ignores_member_path_and_field_names_that_match_a_parameter() {
+    let params = [
+        param(quote!(contains_key)),
+        param(quote!(id)),
+        param(quote!(express)),
+    ];
+    let expr: Expr = parse_quote!(
+        headers.contains_key("x") && matches!(job, Job::Fast { id: 0, .. }) && Kind::express()
+    );
+    let analyzed = analyze(&expr, &params).expect("analyzes");
+
+    assert!(analyzed.uses.is_empty());
+}
+
+#[test]
+fn analyze_still_finds_bindings_next_to_ranges_and_paths() {
+    let params = [param(quote!(low)), param(quote!(high)), param(quote!(id))];
+    let expr: Expr = parse_quote!((low..high).contains(&id));
+    let analyzed = analyze(&expr, &params).expect("analyzes");
+
+    assert_eq!(analyzed.uses, [0, 1, 2]);
+}

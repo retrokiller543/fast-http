@@ -1,4 +1,4 @@
-use syn::{Expr, Ident, LitStr, Pat, Type};
+use syn::{Attribute, Expr, Ident, LitStr, Pat, Type};
 
 use crate::route::HttpMethod;
 
@@ -20,6 +20,8 @@ pub struct Handler {
     pub receiver: bool,
     /// Its extractor arguments, in order.
     pub params: Vec<Param>,
+    /// Its `#[cfg(..)]` attributes, which gate everything generated for it.
+    pub cfgs: Vec<Attribute>,
 }
 
 /// One route attribute: a handler answering a method and pattern, perhaps behind guards.

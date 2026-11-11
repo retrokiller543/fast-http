@@ -1,30 +1,33 @@
 use std::collections::BTreeSet;
 
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
+use quote::quote;
 use syn::{
-    Attribute, Error, FnArg, Ident, ImplItem, Item, ItemFn, ItemImpl, ItemMod, Lifetime, Signature,
-    Visibility, visit_mut::VisitMut,
+    Attribute, Error, FnArg, Ident, ImplItem, Item, ItemImpl, ItemMod, Lifetime, Signature,
+    visit_mut::VisitMut,
 };
 
 use crate::{
     args::ControllerArgs,
     guard::{analyze, bindings},
     path::join,
-    route::{HttpMethod, RouteAttr, split_method},
+    route::RouteAttr,
 };
 
 mod dispatcher;
 mod group;
 mod model;
 mod partition;
+mod register;
+mod standalone;
 
 pub use model::{Handler, Param};
+pub use standalone::{standalone, standalone_route};
 
 use self::{
-    dispatcher::Naming,
     model::{Context, Owner, Variant},
-    partition::{RoutePlan, plan},
+    partition::plan,
+    register::{generate, routes_fn},
 };
 
 /// Expands `#[controller(args)]` applied to an impl block `item`.
@@ -154,94 +157,6 @@ pub fn routes(args: TokenStream, item: TokenStream) -> syn::Result<TokenStream> 
     Ok(quote!(#module))
 }
 
-/// Expands `#[get(..)]` and its siblings applied to a free function `item`.
-///
-/// The function keeps its body under a hidden name. Its own name becomes a unit struct that is
-/// the endpoint, with a `route()` helper that builds the route at the attribute's path.
-pub fn standalone(
-    method: HttpMethod,
-    args: TokenStream,
-    item: TokenStream,
-) -> syn::Result<TokenStream> {
-    let route = RouteAttr::from_args(method, args)?;
-    let errors: Vec<_> = route.errors.iter().map(Error::to_compile_error).collect();
-    let mut function: ItemFn = syn::parse2(item)?;
-    let krate: syn::Path = syn::parse_quote!(::fast_http);
-
-    check_signature(&function.sig, false)?;
-
-    let name = function.sig.ident.clone();
-    let inner = format_ident!("__fast_http_handler_{}", name);
-    let params = params(&function.sig);
-
-    allow_guard_only_params(&mut function.sig, &route.guards, &params)?;
-
-    function.sig.ident = inner.clone();
-
-    let vis = std::mem::replace(&mut function.vis, Visibility::Inherited);
-    let pattern = join(None, &route.path)?;
-    let handlers = vec![Handler {
-        name: inner,
-        receiver: false,
-        params,
-    }];
-    let variants = vec![Variant {
-        handler: 0,
-        method,
-        pattern: pattern.clone(),
-        guards: route.guards,
-        when_text: route.when_text,
-    }];
-    let plans = plan(&variants)?;
-    let ctx = Context {
-        krate: &krate,
-        owner: None,
-        base: None,
-    };
-    let partition = &plans[0].partitions[0];
-    let generated = dispatcher::dispatcher(
-        &ctx,
-        &handlers,
-        partition,
-        Naming {
-            name: Some(name.clone()),
-            vis: quote!(#vis),
-            index: 0,
-        },
-    )?;
-    let items = generated.items;
-
-    Ok(quote! {
-        #[doc(hidden)]
-        #function
-
-        #items
-
-        #(#errors)*
-
-        impl #name {
-            /// The path of this function's route attribute.
-            #vis const PATH: &'static str = #pattern;
-        }
-
-        impl #krate::router::IntoRoute for #name {
-            type Set = (#name,);
-            type Flow = #krate::core::Identity;
-
-            fn into_route(self) -> #krate::router::Route<(#name,), #krate::core::Identity> {
-                #krate::router::route::attributed(Self::PATH).endpoint(self)
-            }
-        }
-    })
-}
-
-/// Expands the general `#[route(METHOD, "/path", when(..))]` applied to a free function `item`.
-pub fn standalone_route(args: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
-    let (method, rest) = syn::parse::Parser::parse2(split_method, args)?;
-
-    standalone(method, rest, item)
-}
-
 /// What `#[controller]` and `#[routes]` emit when they cannot expand: the item as written, minus
 /// the route attributes they would have consumed, followed by the error.
 ///
@@ -275,82 +190,6 @@ pub fn recover(item: TokenStream, error: syn::Error) -> TokenStream {
     quote!(#item #error)
 }
 
-struct Generated {
-    members: Vec<TokenStream>,
-    extra: Vec<TokenStream>,
-    routes: Vec<TokenStream>,
-}
-
-fn generate(ctx: &Context, handlers: &[Handler], plans: &[RoutePlan]) -> syn::Result<Generated> {
-    let krate = ctx.krate;
-    let mut generated = Generated {
-        members: Vec::new(),
-        extra: Vec::new(),
-        routes: Vec::new(),
-    };
-
-    for route in plans {
-        let pattern = &route.pattern;
-        let start = match &ctx.base {
-            Some(base) => quote!(#krate::router::Route::under(#base, #pattern)),
-            None => quote!(#krate::router::Route::new(#pattern)),
-        };
-        let mut endpoints = Vec::new();
-
-        for partition in &route.partitions {
-            let dispatcher = dispatcher::dispatcher(
-                ctx,
-                handlers,
-                partition,
-                Naming::derived(generated.extra.len()),
-            )?;
-
-            generated.extra.push(dispatcher.items);
-            endpoints.push(dispatcher.expr);
-        }
-
-        generated
-            .routes
-            .push(quote!(.route(#start? #(.endpoint(#endpoints))*)));
-    }
-
-    Ok(generated)
-}
-
-fn routes_fn(ctx: &Context, routes: &[TokenStream], group: Option<&Ident>) -> TokenStream {
-    let krate = ctx.krate;
-    let receiver = ctx
-        .owner
-        .as_ref()
-        .map(|_| quote!(self: ::std::sync::Arc<Self>,));
-    let signature = match group {
-        Some(group) => {
-            let name = group::group_fn(group);
-
-            quote! {
-                /// Builds the router of this group, under the controller's path.
-                #[doc(hidden)]
-                pub(crate) fn #name
-            }
-        }
-        None => quote! {
-            /// Builds the router of these routes from their route attributes.
-            pub fn routes
-        },
-    };
-
-    quote! {
-        #signature(
-            #receiver
-        ) -> ::std::result::Result<
-            #krate::router::Router<impl #krate::router::RouteList>,
-            #krate::router::PatternError,
-        > {
-            ::std::result::Result::Ok(#krate::router::Router::new() #(#routes)*)
-        }
-    }
-}
-
 fn collect(
     attrs: &mut Vec<Attribute>,
     sig: &mut Signature,
@@ -367,6 +206,13 @@ fn collect(
         match RouteAttr::from_attribute(&attr) {
             Some(parsed) => {
                 let mut parsed = parsed?;
+
+                if let Some(krate) = &parsed.krate {
+                    return Err(Error::new_spanned(
+                        krate,
+                        "`crate = path` goes on the #[controller] or #[routes] attribute, which expands these routes",
+                    ));
+                }
 
                 errors.append(&mut parsed.errors);
                 routes.push(parsed);
@@ -397,6 +243,7 @@ fn collect(
         name: sig.ident.clone(),
         receiver: matches!(sig.inputs.first(), Some(FnArg::Receiver(_))),
         params,
+        cfgs: cfgs(attrs),
     });
 
     for route in routes {
@@ -410,6 +257,15 @@ fn collect(
     }
 
     Ok(())
+}
+
+/// The `#[cfg(..)]` attributes among `attrs`.
+fn cfgs(attrs: &[Attribute]) -> Vec<Attribute> {
+    attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("cfg"))
+        .cloned()
+        .collect()
 }
 
 /// Marks the parameters that guards read with `#[allow(unused_variables)]`, so a parameter that
