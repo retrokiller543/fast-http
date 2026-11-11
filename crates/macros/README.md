@@ -1,9 +1,5 @@
 # fast-http-macros
 
-## Borrowed returns
-
-A handler may return data borrowed from its arguments, `async fn echo(Path(name): Path<&str>) -> &str`, with named lifetimes too (`fn echo<'a>(..) -> &'a str`). Arguments live as long as the request does, and a borrowed `&str` is copied into the response body. Type and const parameters are still rejected.
-
 ## Role
 
 Route macros for fast-http. `#[controller]` turns an inherent `impl` block of `async fn` handlers into a `routes` constructor that builds a `fast_http_router::Router` from the methods' route attributes. `#[routes]` does the same for a module of free functions, and `#[get]`, `#[post]`, `#[put]`, `#[patch]` and `#[delete]` make a lone free function an endpoint. All three share one engine, with the same typed guards. Use them through the `fast-http` facade (`macros` feature).
@@ -75,6 +71,10 @@ async fn slow(&self, job: Body<Job>) -> .. { }
 ### Compile errors
 
 A variant after an unguarded one for the same method and path (unreachable), a repeated endpoint, a non-`async` function or one with type or const parameters, a receiver other than `&self` (and any receiver in a module or on a lone function), a guard using `self`, two different body types on one route, and a malformed prefix or path.
+
+## Borrowed returns
+
+A handler may return data borrowed from its arguments, `async fn echo(Path(name): Path<&str>) -> &str`, with named lifetimes too (`fn echo<'a>(..) -> &'a str`). Arguments live as long as the request does, and a borrowed `&str` is copied into the response body. Type and const parameters are still rejected.
 
 ## Internal role
 
