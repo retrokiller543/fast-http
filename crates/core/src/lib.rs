@@ -1,5 +1,7 @@
 //! I/O-free building blocks: bodies, extraction, guards, endpoints, controllers and routing.
 
+pub use http;
+
 pub mod body;
 pub mod controller;
 pub mod endpoint;
@@ -23,7 +25,7 @@ pub use error::{
 };
 pub use extract::{
     Extension, FromParams, FromParts, FromPathParam, FromRequest, Path, PathArgs, PathParams,
-    PeerAddr, Segments, WithPeer, with_peer,
+    PeerAddr, QueryParams, Segments, WithPeer, with_peer,
 };
 pub use flow::{Flow, Identity, Next, Stack, reject};
 pub use guard::{BodyGuard, GuardPhase, HeadGuard};

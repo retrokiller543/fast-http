@@ -7,10 +7,12 @@ use crate::{ErrorResponse, ReqBody};
 mod extension;
 mod path;
 mod peer;
+mod query;
 
 pub use extension::Extension;
 pub use path::{FromParams, FromPathParam, Path, PathArgs, PathParams, Segments};
 pub use peer::{PeerAddr, WithPeer, with_peer};
+pub use query::QueryParams;
 
 /// Extracts a value from the request head; any number may precede a [`FromRequest`].
 pub trait FromParts: Sized {
