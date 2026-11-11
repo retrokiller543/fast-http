@@ -19,7 +19,7 @@ pub mod types;
 
 pub use body::{BoxError, DEFAULT_BODY_LIMIT, ResponseBody, buffer};
 pub use controller::Controller;
-pub use endpoint::{DispatchOptions, Endpoint, EndpointSet, Selection, dispatch_set};
+pub use endpoint::{Attempt, DispatchOptions, Endpoint, EndpointSet, Selection, dispatch_set};
 pub use error::{
     DefaultErrorHandler, ErrorHandler, ErrorResponse, HandlerError, IntoOutcome, Outcome,
 };

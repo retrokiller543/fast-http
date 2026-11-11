@@ -28,6 +28,11 @@ impl<B: ReqBody> BodySource<B> {
             .take()
             .ok_or_else(|| HandlerError::internal("the request body was read twice"))
     }
+
+    /// Gives the body back when nothing has read it, so the request can go to another endpoint.
+    pub fn into_unread(self) -> Option<B> {
+        self.0
+    }
 }
 
 /// Whether extracting `T` as the last argument consumes the request body.

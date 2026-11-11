@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use http::{Method, request::Parts};
 
-use crate::{Endpoint, ErrorHandler, GuardPhase, PathParams, Rejection, ReqBody, Response};
+use crate::{Attempt, Endpoint, ErrorHandler, GuardPhase, PathParams, Rejection, ReqBody};
 
 use super::either::{
     EndpointFuture1, EndpointFuture2, EndpointFuture3, EndpointFuture4, EndpointFuture5,
@@ -23,18 +23,18 @@ pub enum Selection {
 
 /// The endpoints sharing one path, tried in order. Implemented for `()` and tuples of up to 16 endpoints.
 pub trait EndpointSet: Send + Sync + 'static {
-    /// Chooses an endpoint from the head, and from the body once it is available.
-    fn select(&self, parts: &Parts, body: Option<&Bytes>) -> Selection;
+    /// Chooses an endpoint from `from` on, using the head, and the body once it is available.
+    fn select(&self, from: usize, parts: &Parts, body: Option<&Bytes>) -> Selection;
 
-    /// Calls the endpoint at `index`, which must come from [`EndpointSet::select`].
-    fn call<'r, B: ReqBody, H: ErrorHandler>(
+    /// Offers the request to the endpoint at `index`, which must come from [`EndpointSet::select`].
+    fn attempt<'r, B: ReqBody, H: ErrorHandler>(
         &'r self,
         index: usize,
         parts: &'r Parts,
         params: PathParams<'r>,
         body: B,
         handler: &'r H,
-    ) -> impl Future<Output = Response> + Send + use<'r, B, H, Self>;
+    ) -> impl Future<Output = Attempt<B>> + Send + use<'r, B, H, Self>;
 }
 
 fn method_applies(method: &Method, requested: &Method, head_alias: bool) -> bool {
@@ -98,18 +98,18 @@ fn rejection(method_seen: bool, methods: &[&Method], miss: http::StatusCode) -> 
 }
 
 impl EndpointSet for () {
-    fn select(&self, _: &Parts, _: Option<&Bytes>) -> Selection {
+    fn select(&self, _: usize, _: &Parts, _: Option<&Bytes>) -> Selection {
         Selection::Rejected(Rejection::MethodNotAllowed { allow: Vec::new() })
     }
 
-    async fn call<'r, B: ReqBody, H: ErrorHandler>(
+    async fn attempt<'r, B: ReqBody, H: ErrorHandler>(
         &'r self,
         _: usize,
         _: &'r Parts,
         _: PathParams<'r>,
         _: B,
         _: &'r H,
-    ) -> Response {
+    ) -> Attempt<B> {
         unreachable!("an empty set never selects an endpoint")
     }
 }
@@ -117,14 +117,15 @@ impl EndpointSet for () {
 macro_rules! endpoint_set {
     ($future:ident; $($endpoint:ident : $index:tt),+) => {
         impl<$($endpoint: Endpoint),+> EndpointSet for ($($endpoint,)+) {
-            fn select(&self, parts: &Parts, body: Option<&Bytes>) -> Selection {
+            fn select(&self, from: usize, parts: &Parts, body: Option<&Bytes>) -> Selection {
                 let methods = [$(self.$index.method()),+];
                 let head_alias = !methods.contains(&&Method::HEAD);
-                let mut method_seen = false;
+                let mut method_seen = from > 0;
 
                 $(
-                    if let Some(selection) =
-                        consider(&self.$index, $index, parts, body, head_alias, &mut method_seen)
+                    if $index >= from
+                        && let Some(selection) =
+                            consider(&self.$index, $index, parts, body, head_alias, &mut method_seen)
                     {
                         return selection;
                     }
@@ -133,16 +134,16 @@ macro_rules! endpoint_set {
                 rejection(method_seen, &methods, http::StatusCode::BAD_REQUEST)
             }
 
-            fn call<'r, Bd: ReqBody, Eh: ErrorHandler>(
+            fn attempt<'r, Bd: ReqBody, Eh: ErrorHandler>(
                 &'r self,
                 index: usize,
                 parts: &'r Parts,
                 params: PathParams<'r>,
                 body: Bd,
                 handler: &'r Eh,
-            ) -> impl Future<Output = Response> + Send + use<'r, Bd, Eh, $($endpoint),+> {
+            ) -> impl Future<Output = Attempt<Bd>> + Send + use<'r, Bd, Eh, $($endpoint),+> {
                 match index {
-                    $($index => $future::$endpoint { fut: self.$index.call(parts, params, body, handler) },)+
+                    $($index => $future::$endpoint { fut: self.$index.attempt(parts, params, body, handler) },)+
                     _ => unreachable!("index comes from `EndpointSet::select`"),
                 }
             }

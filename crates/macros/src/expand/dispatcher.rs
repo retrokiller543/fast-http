@@ -76,7 +76,7 @@ pub fn dispatcher(
         .variants
         .last()
         .is_some_and(|variant| !variant.guards.is_empty());
-    let miss = last_guarded.then(|| quote!(::std::result::Result::Err(__rt::guard_miss())));
+    let miss = last_guarded.then(|| quote!(::std::result::Result::Ok(::std::option::Option::None)));
     let slot_vars: Vec<_> = (0..table.types.len()).map(slot_var).collect();
     let slot_types = &table.types;
     let rule = table.body_rule(&rt);
@@ -129,7 +129,6 @@ pub fn dispatcher(
                 &#core::http::Method::#method
             }
 
-            #[allow(unused_variables, unused_mut)]
             async fn call<'__r, __B: #core::ReqBody, __H: #core::ErrorHandler>(
                 &self,
                 __parts: &'__r #core::http::request::Parts,
@@ -137,21 +136,52 @@ pub fn dispatcher(
                 __body: __B,
                 __handler: &__H,
             ) -> #core::Response {
+                match self.attempt(__parts, __params, __body, __handler).await {
+                    #core::Attempt::Done(response) => response,
+                    #core::Attempt::Declined(_) => {
+                        #rt::fail(#rt::guard_miss(), __parts, __handler).await
+                    }
+                }
+            }
+
+            #[allow(unused_variables, unused_mut)]
+            async fn attempt<'__r, __B: #core::ReqBody, __H: #core::ErrorHandler>(
+                &self,
+                __parts: &'__r #core::http::request::Parts,
+                __params: #core::PathParams<'__r>,
+                __body: __B,
+                __handler: &__H,
+            ) -> #core::Attempt<__B> {
                 use #rt as __rt;
                 #inline_rule
                 #this_binding
                 let mut __source = __rt::BodySource::new(__body);
                 #( let mut #slot_vars = __rt::slot::<#slot_types>(); )*
 
-                let __result: ::std::result::Result<#core::Response, #core::HandlerError> = async {
+                let __result: ::std::result::Result<
+                    ::std::option::Option<#core::Response>,
+                    #core::HandlerError,
+                > = async {
                     #(#blocks)*
                     #miss
                 }
                 .await;
 
                 match __result {
-                    ::std::result::Result::Ok(response) => response,
-                    ::std::result::Result::Err(error) => __rt::fail(error, __parts, __handler).await,
+                    ::std::result::Result::Ok(::std::option::Option::Some(response)) => {
+                        #core::Attempt::Done(response)
+                    }
+                    ::std::result::Result::Ok(::std::option::Option::None) => {
+                        match __source.into_unread() {
+                            ::std::option::Option::Some(body) => #core::Attempt::Declined(body),
+                            ::std::option::Option::None => #core::Attempt::Done(
+                                __rt::fail(__rt::guard_miss(), __parts, __handler).await,
+                            ),
+                        }
+                    }
+                    ::std::result::Result::Err(error) => {
+                        #core::Attempt::Done(__rt::fail(error, __parts, __handler).await)
+                    }
                 }
             }
         }
@@ -378,6 +408,8 @@ fn call_step(ctx: &Context, rt: &TokenStream, handler: &Handler, slots: &[usize]
     quote! {
         #(#takes)*
 
-        return ::std::result::Result::Ok(#rt::finish(#call.await, __parts, __handler).await);
+        return ::std::result::Result::Ok(::std::option::Option::Some(
+            #rt::finish(#call.await, __parts, __handler).await,
+        ));
     }
 }

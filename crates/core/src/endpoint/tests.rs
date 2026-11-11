@@ -152,3 +152,50 @@ fn dispatch_set_body_guard_selects_by_buffered_body() {
     );
     assert_eq!(run(&set, Method::POST, b"plain").status(), StatusCode::OK);
 }
+
+/// Test endpoint that turns every request down without reading its body.
+struct Declining;
+
+impl Endpoint for Declining {
+    fn method(&self) -> &Method {
+        &Method::GET
+    }
+
+    async fn call<B: ReqBody, H: ErrorHandler>(
+        &self,
+        _: &Parts,
+        _: PathParams<'_>,
+        _: B,
+        _: &H,
+    ) -> Response {
+        unreachable!("a declining endpoint is only attempted")
+    }
+
+    async fn attempt<B: ReqBody, H: ErrorHandler>(
+        &self,
+        _: &Parts,
+        _: PathParams<'_>,
+        body: B,
+        _: &H,
+    ) -> Attempt<B> {
+        Attempt::Declined(body)
+    }
+}
+
+#[test]
+fn dispatch_set_declined_request_goes_to_the_next_endpoint() {
+    let set = (Declining, Fixed::new(Method::GET, StatusCode::ACCEPTED));
+
+    let response = run(&set, Method::GET, b"");
+
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+}
+
+#[test]
+fn dispatch_set_declined_by_every_endpoint_returns_guard_miss_status() {
+    let set = (Declining, Declining);
+
+    let response = run(&set, Method::GET, b"");
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}

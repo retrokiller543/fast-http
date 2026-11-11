@@ -153,6 +153,17 @@ fn health_with_guard() -> Router<impl fast_http::router::RouteList> {
 }
 
 #[tokio::test]
+async fn standalone_endpoints_on_one_route_fall_through_on_a_guard_miss() {
+    let router = standalone();
+
+    let full = send(&router, Method::GET, "/deep?full", &[], "").await;
+    let plain = send(&router, Method::GET, "/deep", &[], "").await;
+
+    assert_eq!(full.1, "full");
+    assert_eq!(plain.1, "plain");
+}
+
+#[tokio::test]
 async fn standalone_guard_miss_is_a_client_error() {
     let (status, _) = send(&health_with_guard(), Method::GET, "/deep", &[], "").await;
 

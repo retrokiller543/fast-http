@@ -3,10 +3,12 @@ use http::{Method, request::Parts};
 
 use crate::{ErrorHandler, GuardPhase, PathParams, ReqBody, Response};
 
+mod attempt;
 mod dispatch;
 mod either;
 mod set;
 
+pub use attempt::Attempt;
 pub use dispatch::{DispatchOptions, dispatch_set};
 pub use either::{
     EndpointFuture1, EndpointFuture2, EndpointFuture3, EndpointFuture4, EndpointFuture5,
@@ -50,6 +52,18 @@ pub trait Endpoint: Send + Sync + 'static {
         body: B,
         handler: &H,
     ) -> impl Future<Output = Response> + Send;
+
+    /// Like [`Endpoint::call`], but may decline the request and hand the unread body back, so the
+    /// next endpoint of the set gets its turn. The default never declines.
+    fn attempt<'r, B: ReqBody, H: ErrorHandler>(
+        &self,
+        parts: &'r Parts,
+        params: PathParams<'r>,
+        body: B,
+        handler: &H,
+    ) -> impl Future<Output = Attempt<B>> + Send {
+        async move { Attempt::Done(self.call(parts, params, body, handler).await) }
+    }
 }
 
 #[cfg(test)]

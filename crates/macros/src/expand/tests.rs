@@ -213,7 +213,7 @@ fn expand_a_single_last_type_needs_no_body_assertion() {
 }
 
 #[test]
-fn expand_last_guarded_variant_renders_a_guard_miss() {
+fn expand_last_guarded_variant_declines_the_request() {
     let out = expand(
         quote!(),
         quote! {
@@ -224,11 +224,11 @@ fn expand_last_guarded_variant_renders_a_guard_miss() {
         },
     );
 
-    assert!(out.contains("Err(__rt::guard_miss())"));
+    assert!(out.contains("Ok(::std::option::Option::None)}.await"));
 }
 
 #[test]
-fn expand_unguarded_last_variant_has_no_guard_miss() {
+fn expand_unguarded_last_variant_never_declines() {
     let out = expand(
         quote!(),
         quote! {
@@ -242,7 +242,7 @@ fn expand_unguarded_last_variant_has_no_guard_miss() {
         },
     );
 
-    assert!(!out.contains("guard_miss"));
+    assert!(!out.contains("Ok(::std::option::Option::None)}.await"));
 }
 
 #[test]

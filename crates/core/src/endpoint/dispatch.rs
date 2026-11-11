@@ -3,8 +3,8 @@ use http::{StatusCode, request::Parts};
 use http_body_util::Full;
 
 use crate::{
-    DEFAULT_BODY_LIMIT, EndpointSet, ErrorHandler, HandlerError, PathParams, ReqBody, Response,
-    Selection, body::buffer,
+    Attempt, DEFAULT_BODY_LIMIT, EndpointSet, ErrorHandler, HandlerError, PathParams, ReqBody,
+    Response, Selection, body::buffer,
 };
 
 /// Limits and fallbacks applied while dispatching to an [`EndpointSet`].
@@ -40,51 +40,73 @@ where
     B: ReqBody,
     H: ErrorHandler,
 {
-    let mut selection = set.select(parts, None);
+    let selection = set.select(0, parts, None);
 
     if selection == Selection::NeedBody {
         let bytes = match buffer(body, options.body_limit).await {
             Ok(bytes) => bytes,
             Err(rejection) => return handler.handle(HandlerError::new(rejection), parts).await,
         };
+        let selection = set.select(0, parts, Some(&bytes));
 
-        selection = set.select(parts, Some(&bytes));
-
-        return finish(
+        return run(
             set,
             selection,
             parts,
             params,
-            Full::<Bytes>::new(bytes),
+            Full::<Bytes>::new(bytes.clone()),
             handler,
             options,
+            |from| set.select(from, parts, Some(&bytes)),
         )
         .await;
     }
 
-    finish(set, selection, parts, params, body, handler, options).await
+    run(
+        set,
+        selection,
+        parts,
+        params,
+        body,
+        handler,
+        options,
+        |from| set.select(from, parts, None),
+    )
+    .await
 }
 
-async fn finish<S: EndpointSet, B: ReqBody, H: ErrorHandler>(
+#[allow(clippy::too_many_arguments)]
+async fn run<S: EndpointSet, B: ReqBody, H: ErrorHandler>(
     set: &S,
-    selection: Selection,
+    mut selection: Selection,
     parts: &Parts,
     params: PathParams<'_>,
-    body: B,
+    mut body: B,
     handler: &H,
     options: DispatchOptions,
+    reselect: impl Fn(usize) -> Selection,
 ) -> Response {
-    match selection {
-        Selection::Selected(index) => set.call(index, parts, params, body, handler).await,
-        Selection::Rejected(rejection) => {
-            let rejection = rejection.with_guard_miss(options.guard_miss);
+    loop {
+        match selection {
+            Selection::Selected(index) => {
+                match set.attempt(index, parts, params, body, handler).await {
+                    Attempt::Done(response) => return response,
+                    Attempt::Declined(returned) => {
+                        body = returned;
+                        selection = reselect(index + 1);
+                    }
+                }
+            }
+            Selection::Rejected(rejection) => {
+                let rejection = rejection.with_guard_miss(options.guard_miss);
 
-            handler.handle(HandlerError::new(rejection), parts).await
-        }
-        Selection::NeedBody => {
-            let error = HandlerError::internal("endpoint asked for the body twice");
+                return handler.handle(HandlerError::new(rejection), parts).await;
+            }
+            Selection::NeedBody => {
+                let error = HandlerError::internal("endpoint asked for the body twice");
 
-            handler.handle(error, parts).await
+                return handler.handle(error, parts).await;
+            }
         }
     }
 }
