@@ -20,6 +20,12 @@ pub struct ViaParams;
 pub struct ViaBody;
 
 /// Builds one handler argument; the marker `M` keeps the head-only and body-consuming paths apart.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be used as a handler argument",
+    label = "this is not an extractor, or one of its own requirements is not met",
+    note = "an argument implements `FromParams` (built from the request head and path) or `FromRequest` (consumes the body, and must be the last argument)",
+    note = "for an extractor such as `Body<T>`, check its requirements too, for example that `T` implements `Deserialize` for an enabled format"
+)]
 pub trait Extract<M> {
     /// Value produced for a request borrowed for `'r`.
     type At<'r>: Send;
