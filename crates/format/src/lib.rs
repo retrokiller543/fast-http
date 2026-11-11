@@ -5,6 +5,8 @@ mod body;
 mod error;
 mod format;
 mod negotiated;
+#[cfg(feature = "form")]
+mod query;
 mod set;
 
 pub mod formats;
@@ -17,4 +19,6 @@ pub use body::{Body, DEFAULT_BODY_LIMIT};
 pub use error::FormatError;
 pub use format::{Decode, Encode, Format};
 pub use negotiated::Negotiated;
+#[cfg(feature = "form")]
+pub use query::Query;
 pub use set::{Cons, DecodeSet, Enabled, EncodeSet, FormatSet, Nil};
