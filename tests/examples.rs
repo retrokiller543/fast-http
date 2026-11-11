@@ -232,6 +232,18 @@ async fn standalone_lone_functions_are_complete_endpoints() {
 
 #[cfg(feature = "macros")]
 #[tokio::test]
+async fn standalone_endpoints_on_one_route_fall_through() {
+    let router = standalone_example::app().expect("routes");
+
+    let named = send(&router, Method::GET, "/greet?name=ada", &[], "").await;
+    let anonymous = send(&router, Method::GET, "/greet", &[], "").await;
+
+    assert_eq!(named.1, "hello, ada");
+    assert_eq!(anonymous.1, "hello, world");
+}
+
+#[cfg(feature = "macros")]
+#[tokio::test]
 async fn standalone_module_variants_and_ordering() {
     let router = standalone_example::app().expect("routes");
 

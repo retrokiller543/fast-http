@@ -5,6 +5,8 @@
 //! curl http://127.0.0.1:3000/health
 //! curl http://127.0.0.1:3000/admin
 //! curl -H 'x-admin: 1' http://127.0.0.1:3000/admin
+//! curl http://127.0.0.1:3000/greet
+//! curl 'http://127.0.0.1:3000/greet?name=ada'
 //! curl http://127.0.0.1:3000/items
 //! curl -H 'x-all: 1' http://127.0.0.1:3000/items
 //! curl http://127.0.0.1:3000/items/0
@@ -13,11 +15,13 @@
 //! ```
 //!
 //! A lone `#[get(..)]` function becomes an endpoint named after the function, and `name.route()`
-//! builds its route. It is a complete endpoint: when its guard misses, the request is answered
-//! with the guard miss, not handed to another function. To give one path several guarded
-//! variants, put the functions in a `#[routes]` module: they are grouped, extracted lazily and at
-//! most once, exactly like the methods of a `#[controller]`. Routes are ordered most specific first, so `/items/orders` wins
-//! over `/items/{id}` whatever order they are declared in.
+//! builds its route. When its guard misses it declines the request, and the next endpoint
+//! registered on the same `Route` gets its turn, as `/greet` shows. Each lone function extracts
+//! its own arguments and cannot hand on a body it has already read, which is the price of keeping
+//! them separate. To share extraction and one body parse across the variants of a path, put the
+//! functions in a `#[routes]` module: they are grouped, extracted lazily and at most once, exactly
+//! like the methods of a `#[controller]`. Routes are ordered most specific first, so
+//! `/items/orders` wins over `/items/{id}` whatever order they are declared in.
 //!
 //! The one rule for bodies: variants of one method and path that read the body must all take the
 //! same body type. If a body can take several shapes, make it one enum and guard on its variants.
@@ -25,8 +29,9 @@
 use std::net::SocketAddr;
 
 use fast_http::{
+    core::QueryParams,
     get,
-    router::{PatternError, RouteList, Router},
+    router::{PatternError, Route, RouteList, Router},
     routes,
     server::Server,
     transport::Tcp,
@@ -40,6 +45,16 @@ async fn health() -> &'static str {
 #[get("/admin", when(headers.contains_key("x-admin")))]
 async fn admin() -> &'static str {
     "welcome, admin"
+}
+
+#[get("/greet", when(query.contains("name")))]
+async fn greet_named(query: QueryParams<'_>) -> String {
+    format!("hello, {}", query.get("name").unwrap_or("stranger"))
+}
+
+#[get("/greet")]
+async fn greet() -> &'static str {
+    "hello, world"
 }
 
 #[routes("/items")]
@@ -99,6 +114,7 @@ pub fn app() -> Result<Router<impl RouteList>, PatternError> {
     Ok(Router::new()
         .route(health.route()?)
         .route(admin.route()?)
+        .route(Route::new("/greet")?.endpoint(greet_named).endpoint(greet))
         .merge(items::routes()?))
 }
 
