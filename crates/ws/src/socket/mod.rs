@@ -1,6 +1,7 @@
 use std::{
     pin::Pin,
     task::{Context, Poll, ready},
+    time::Duration,
 };
 
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
@@ -12,11 +13,15 @@ use tokio_tungstenite::{
     WebSocketStream,
     tungstenite::{
         self,
+        error::ProtocolError,
         protocol::{Role, WebSocketConfig},
     },
 };
 
-use crate::{Message, Permit, ShutdownSignal};
+use crate::{CloseFrame, Message, Permit, ShutdownSignal, TRACE_TARGET};
+
+/// How long [`WebSocket::close`] waits for the peer to answer the close frame.
+pub const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// A failure while reading from or writing to a [`WebSocket`].
 #[derive(Debug, thiserror::Error)]
@@ -83,9 +88,42 @@ impl<S: AsyncRead + AsyncWrite + Unpin> WebSocket<S> {
         self.protocol.as_ref()
     }
 
-    /// Closes the connection, sending a close frame first.
-    pub async fn close(mut self) -> Result<(), Error> {
-        SinkExt::close(&mut self).await
+    /// Closes the connection: sends a close frame without a status, then waits up to
+    /// [`CLOSE_TIMEOUT`] for the peer's close reply so the handshake completes before the socket
+    /// is dropped.
+    pub async fn close(self) -> Result<(), Error> {
+        self.close_handshake(None).await
+    }
+
+    /// Like [`close`](Self::close), with a status code and reason, such as
+    /// [`close_code::AWAY`](crate::close_code::AWAY) on shutdown.
+    pub async fn close_with(self, frame: CloseFrame) -> Result<(), Error> {
+        self.close_handshake(Some(frame)).await
+    }
+
+    /// Sends the close frame and reads, discarding anything that is not the peer's close reply,
+    /// until the connection ends or [`CLOSE_TIMEOUT`] passes.
+    ///
+    /// When a close is already under way, because the peer closed first, there is nothing to send
+    /// and the reading flushes the reply that is queued.
+    async fn close_handshake(mut self, frame: Option<CloseFrame>) -> Result<(), Error> {
+        match self.inner.send(Message::Close(frame).into_raw()).await {
+            Ok(())
+            | Err(
+                tungstenite::Error::ConnectionClosed
+                | tungstenite::Error::AlreadyClosed
+                | tungstenite::Error::Protocol(ProtocolError::SendAfterClosing),
+            ) => {}
+            Err(error) => return Err(Error(error)),
+        }
+
+        let reply = async { while let Some(Ok(_)) = self.inner.next().await {} };
+
+        if tokio::time::timeout(CLOSE_TIMEOUT, reply).await.is_err() {
+            tracing::debug!(target: TRACE_TARGET, "websocket peer did not answer the close frame in time");
+        }
+
+        Ok(())
     }
 }
 

@@ -21,16 +21,21 @@ async fn echo(upgrade: WebSocketUpgrade) -> CoreResponse {
         .protocols(["chat.v2", "chat.v1"])
         .on_upgrade(|mut socket| async move {
             while let Some(Ok(message)) = socket.recv().await {
-                match message {
-                    Message::Close(_) => break,
-                    other => {
-                        if socket.send(other).await.is_err() {
-                            break;
-                        }
-                    }
+                if matches!(message, Message::Close(_)) {
+                    continue;
+                }
+
+                if socket.send(message).await.is_err() {
+                    break;
                 }
             }
         })
+}
+
+async fn misconfigured(upgrade: WebSocketUpgrade) -> CoreResponse {
+    upgrade
+        .max_write_buffer_size(64 * 1024)
+        .on_upgrade(|_| async {})
 }
 
 async fn plain(upgrade: Option<WebSocketUpgrade>) -> &'static str {
@@ -60,12 +65,12 @@ async fn limited(
                         }
                     },
                     () = shutdown.wait() => {
-                        let _ = socket.send(Message::Close(Some(CloseFrame {
+                        let _ = socket.close_with(CloseFrame {
                             code: close_code::AWAY,
                             reason: Utf8Bytes::from_static("shutdown"),
-                        }))).await;
+                        }).await;
 
-                        break;
+                        return;
                     }
                 }
             }
@@ -107,6 +112,11 @@ fn routes(admission: Admission) -> impl Routes {
                 .get(move |upgrade: WebSocketUpgrade| limited(admission.clone(), upgrade)),
         )
         .route(Route::new("/tagged").expect("pattern").get(tagged))
+        .route(
+            Route::new("/misconfigured")
+                .expect("pattern")
+                .get(misconfigured),
+        )
 }
 
 struct Running {
@@ -389,4 +399,47 @@ async fn shutdown_tells_live_sockets_to_close_and_drains() {
     );
 
     server.stop().await;
+}
+
+#[tokio::test]
+async fn upgrade_with_inconsistent_write_buffers_is_refused_before_101() {
+    let (connector, server) = start().await;
+
+    assert_eq!(
+        status_of(&connector, "/misconfigured").await,
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn upgrade_with_a_malformed_key_is_rejected() {
+    let (connector, server) = start().await;
+    let io = connector.connect().await.expect("connect");
+    let mut request = handshake("/ws", None);
+
+    request.headers_mut().insert(
+        header::SEC_WEBSOCKET_KEY,
+        HeaderValue::from_static("invalid"),
+    );
+
+    let status = match client_async(request, io).await {
+        Ok((_, response)) => response.status(),
+        Err(tokio_tungstenite::tungstenite::Error::Http(response)) => response.status(),
+        Err(other) => panic!("unexpected handshake error: {other}"),
+    };
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    server.stop().await;
+}
+
+#[test]
+fn is_valid_key_accepts_only_base64_of_sixteen_bytes() {
+    assert!(is_valid_key(b"dGhlIHNhbXBsZSBub25jZQ=="));
+    assert!(!is_valid_key(b"invalid"));
+    assert!(!is_valid_key(b"dGhlIHNhbXBsZSBub25jZQ="));
+    assert!(!is_valid_key(b"dGhlIHNhbXBsZSBub25j*Q=="));
+    assert!(!is_valid_key(b"dGhlIHNhbXBsZSBub25jZQAA"));
 }

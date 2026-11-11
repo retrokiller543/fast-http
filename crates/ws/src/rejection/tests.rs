@@ -9,11 +9,12 @@ fn into_response_method_not_get_sets_allow() {
 }
 
 #[test]
-fn into_response_unsupported_version_advertises_13() {
+fn into_response_unsupported_version_advertises_13_and_the_upgrade() {
     let response = WebSocketUpgradeRejection::UnsupportedVersion.into_response();
 
     assert_eq!(response.status(), StatusCode::UPGRADE_REQUIRED);
     assert_eq!(response.headers()[header::SEC_WEBSOCKET_VERSION], "13");
+    assert_eq!(response.headers()[header::UPGRADE], "websocket");
 }
 
 #[test]

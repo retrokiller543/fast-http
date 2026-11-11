@@ -100,12 +100,9 @@ impl IntoResponse for TestError {
             .status(self.status())
             .header("content-type", "application/json")
             .header("x-error", self.test_error.to_string())
-            .body(ResponseBody::from(format!(
-                r#"{{
-                "test_error": "{}"
-                }}"#,
-                self.test_error
-            )))
+            .body(ResponseBody::from(
+                serde_json::json!({ "test_error": self.test_error }).to_string(),
+            ))
             .unwrap()
     }
 }

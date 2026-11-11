@@ -6,7 +6,9 @@ use crate::MultipartError;
 /// One part of a multipart body, read incrementally.
 ///
 /// A field borrows nothing from its [`Multipart`](crate::Multipart), but the parser only moves
-/// on once the field is consumed or dropped.
+/// on once the field is dropped: drop a field read through [`chunk`](Self::chunk) before calling
+/// `next_field`, even after `chunk` returned `None`, or `next_field` fails. [`bytes`](Self::bytes)
+/// and [`text`](Self::text) consume the field, so nothing more is needed after them.
 #[derive(Debug)]
 pub struct Field {
     inner: multer::Field<'static>,

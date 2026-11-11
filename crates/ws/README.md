@@ -13,7 +13,11 @@ async fn echo(upgrade: WebSocketUpgrade) -> Response {
         .protocols(["chat.v2", "chat.v1"])
         .on_upgrade(|mut socket| async move {
             while let Some(Ok(message)) = socket.recv().await {
-                if matches!(message, Message::Close(_)) || socket.send(message).await.is_err() {
+                if matches!(message, Message::Close(_)) {
+                    continue;
+                }
+
+                if socket.send(message).await.is_err() {
                     break;
                 }
             }
@@ -23,9 +27,11 @@ async fn echo(upgrade: WebSocketUpgrade) -> Response {
 let routes = Router::new().route(Route::new("/ws")?.get(echo));
 ```
 
+When the client closes first, `recv` yields its `Message::Close` and queues the reply; keep calling `recv` until it returns `None`, which sends that reply, instead of dropping the socket at once. To close from the server side, `socket.close()` or `socket.close_with(frame)` sends the close frame and waits up to `CLOSE_TIMEOUT` (5 s) for the client's answer.
+
 - `WebSocketUpgrade` is a head extractor. It validates the RFC 6455 handshake and rejects anything else with a typed `WebSocketUpgradeRejection` (400, 405, 426 or 500). `Option<WebSocketUpgrade>` serves a plain response on the same path.
 - `protocols` takes the server's subprotocols in preference order and picks the first the client offered; `selected_protocol()` shows the choice before `on_upgrade`.
-- `WebSocket` is a `Stream` of `Message` and a `Sink<Message>`, plus `recv`, `send`, `close` and `protocol`. `StreamExt::split` gives independent halves.
+- `WebSocket` is a `Stream` of `Message` and a `Sink<Message>`, plus `recv`, `send`, `close`, `close_with` and `protocol`. `StreamExt::split` gives independent halves.
 - `WebSocketRequest` is a `HeadGuard` matching upgrade requests, for use with `Branch` or endpoint guards.
 - Limits: `max_message_size`, `max_frame_size` and the buffer sizes.
 - Admission control: an `Admission` caps the live sockets of an endpoint and counts them. `upgrade.admit(&admission)?` takes a slot before anything is upgraded and fails with `AdmissionRejection`, which renders as `503` with `Retry-After`. The slot is held until the `WebSocket` is dropped, so `admission.active()` is the number of open sockets.
@@ -43,8 +49,16 @@ async fn ws(admission: Admission, upgrade: WebSocketUpgrade) -> Result<Response,
 
         loop {
             tokio::select! {
-                message = socket.recv() => { /* handle, break on close */ }
-                () = shutdown.wait() => break,
+                message = socket.recv() => match message {
+                    Some(Ok(_)) => { /* handle; a client close ends in None on the next recv */ }
+                    _ => break,
+                },
+                () = shutdown.wait() => {
+                    let frame = CloseFrame { code: close_code::AWAY, reason: Utf8Bytes::from_static("shutdown") };
+                    let _ = socket.close_with(frame).await;
+
+                    return;
+                }
             }
         }
     }))

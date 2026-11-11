@@ -2,7 +2,7 @@ use tokio::io::duplex;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 
 use super::*;
-use crate::message::close_code;
+use crate::{Utf8Bytes, message::close_code};
 
 async fn pair() -> (
     WebSocket<tokio::io::DuplexStream>,
@@ -90,4 +90,40 @@ async fn split_halves_work_independently() {
 
     assert_eq!(incoming, Message::text("in"));
     assert_eq!(outgoing, tungstenite::Message::text("out"));
+}
+
+#[tokio::test]
+async fn close_with_sends_the_frame_and_waits_for_the_reply() {
+    let (server, mut client) = pair().await;
+    let closing = tokio::spawn(server.close_with(CloseFrame {
+        code: close_code::AWAY,
+        reason: Utf8Bytes::from_static("bye"),
+    }));
+
+    let frame = client.next().await.expect("close frame").expect("ok");
+
+    assert!(
+        matches!(frame, tungstenite::Message::Close(Some(frame)) if u16::from(frame.code) == close_code::AWAY)
+    );
+    assert!(client.next().await.is_none());
+
+    tokio::time::timeout(Duration::from_secs(1), closing)
+        .await
+        .expect("close completes once the client answers")
+        .expect("close task does not panic")
+        .expect("close succeeds");
+}
+
+#[tokio::test]
+async fn close_after_the_peer_closed_still_succeeds() {
+    let (mut server, mut client) = pair().await;
+
+    client.close(None).await.expect("client close");
+
+    let first = server.recv().await.expect("message").expect("ok");
+
+    assert!(matches!(first, Message::Close(_)));
+    let result = server.close().await;
+
+    assert!(result.is_ok(), "{result:?}");
 }

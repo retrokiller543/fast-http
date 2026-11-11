@@ -49,10 +49,10 @@ test-doc:
 verify: fmt-check clippy check-isolated deny test test-benchmarks test-doc
 
 # The benchmarks workspace picks up `deny.toml` from the parent directory.
-[doc("Banned crates (openssl, native-tls, rsa), advisories and sources; see `deny.toml`.")]
+[doc("Banned crates (openssl, native-tls, rsa), advisories, licenses and sources; see `deny.toml`.")]
 deny:
-    cargo deny --all-features check bans advisories sources
-    cargo deny {{ benchmarks }} --all-features check bans advisories sources
+    cargo deny --all-features check bans advisories licenses sources
+    cargo deny {{ benchmarks }} --all-features check bans advisories licenses sources
 
 # Compile every bench without running it.
 bench-check:

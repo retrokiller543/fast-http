@@ -15,7 +15,7 @@ pub use admission::{Admission, AdmissionRejection, Permit, ShutdownSignal};
 pub use guard::WebSocketRequest;
 pub use message::{CloseFrame, Message, Utf8Bytes, close_code};
 pub use rejection::WebSocketUpgradeRejection;
-pub use socket::{Error, WebSocket};
+pub use socket::{CLOSE_TIMEOUT, Error, WebSocket};
 pub use upgrade::WebSocketUpgrade;
 
 /// `tracing` target for upgrade events.
