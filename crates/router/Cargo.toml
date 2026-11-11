@@ -12,6 +12,8 @@ categories.workspace = true
 bytes.workspace = true
 fast-http-core.workspace = true
 http.workspace = true
+http-body.workspace = true
+pin-project-lite.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

@@ -4,6 +4,8 @@ mod bound;
 
 pub use bound::{Bind, Bound, bind};
 
+use crate::dispatch::BodySource;
+
 use bytes::Bytes;
 use fast_http_core::{
     Endpoint, ErrorHandler, FromParams, FromRequest, GuardPhase, HandlerError, IntoOutcome,
@@ -22,16 +24,28 @@ pub trait Extract<M> {
     /// Value produced for a request borrowed for `'r`.
     type At<'r>: Send;
 
+    /// Whether extraction consumes the request body.
+    const USES_BODY: bool;
+
     /// Extracts the argument, failing with an already-boxed error.
     fn extract<'r, B: ReqBody>(
         parts: &'r Parts,
         params: &PathParams<'r>,
         body: B,
     ) -> impl Future<Output = Result<Self::At<'r>, HandlerError>> + Send;
+
+    /// Extracts the argument, taking the body from `source` only if it needs one.
+    fn extract_from<'r, B: ReqBody>(
+        parts: &'r Parts,
+        params: &PathParams<'r>,
+        source: &mut BodySource<B>,
+    ) -> impl Future<Output = Result<Self::At<'r>, HandlerError>> + Send;
 }
 
 impl<T: FromParams> Extract<ViaParams> for T {
     type At<'r> = T::At<'r>;
+
+    const USES_BODY: bool = false;
 
     async fn extract<'r, B: ReqBody>(
         parts: &'r Parts,
@@ -42,16 +56,38 @@ impl<T: FromParams> Extract<ViaParams> for T {
 
         T::from_params(parts, params).map_err(HandlerError::from)
     }
+
+    async fn extract_from<'r, B: ReqBody>(
+        parts: &'r Parts,
+        params: &PathParams<'r>,
+        _: &mut BodySource<B>,
+    ) -> Result<Self::At<'r>, HandlerError> {
+        T::from_params(parts, params).map_err(HandlerError::from)
+    }
 }
 
 impl<T: FromRequest + Send> Extract<ViaBody> for T {
     type At<'r> = T;
+
+    const USES_BODY: bool = true;
 
     async fn extract<'r, B: ReqBody>(
         parts: &'r Parts,
         _: &PathParams<'r>,
         body: B,
     ) -> Result<Self, HandlerError> {
+        T::from_request(parts, body)
+            .await
+            .map_err(HandlerError::from)
+    }
+
+    async fn extract_from<'r, B: ReqBody>(
+        parts: &'r Parts,
+        _: &PathParams<'r>,
+        source: &mut BodySource<B>,
+    ) -> Result<Self, HandlerError> {
+        let body = source.take().await.map_err(HandlerError::new)?;
+
         T::from_request(parts, body)
             .await
             .map_err(HandlerError::from)

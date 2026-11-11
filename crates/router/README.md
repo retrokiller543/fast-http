@@ -32,6 +32,8 @@ Patterns: `/users/{id}` captures one segment, `*` matches one segment without ca
 
 Handlers are plain `async fn`s and may borrow from the request: `Path<(&str, u64)>`, `Path<Segments<'_>>`, `Path<BTreeMap<&str, &str>>`, `&Parts`, `&HeaderMap`, `&Method`, `&Uri` and `&Extensions` all extract without allocating.
 
+`bind(state, handler)` passes cloned state as the handler's first argument, so shared state is explicit and there is no registry. `FnEndpoint::guard` selects an endpoint on the request head and `FnEndpoint::body_guard` on the buffered body, which the handler then receives unchanged. `fast_http_router::dispatch` holds the runtime support for the endpoints `#[controller]` generates.
+
 Run `cargo run -p fast-http-router --example users` for a mocked-request walkthrough.
 
 ## Internal role

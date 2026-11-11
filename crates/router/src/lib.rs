@@ -1,5 +1,6 @@
 //! Static, allocation-free request routing over typed controllers.
 
+pub mod dispatch;
 pub mod handler;
 pub mod pattern;
 pub mod route;
