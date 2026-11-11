@@ -31,7 +31,12 @@ let router = Router::new().merge(Arc::new(chat).routes()?);
 
 - **`#[controller("/prefix")] impl T { .. }`** has state: a `&self` method is bound to the `Arc<Self>` that `routes(self: Arc<Self>)` takes, and a method without a receiver is used as it is.
 - **`#[routes("/prefix")] mod name { .. }`** is the same without state. The free `async fn`s inside, with route attributes, become the module's `routes()` function (`name::routes()`). Functions that share a method and path are variants of one route. Types from the parent scope need `use super::*;`.
+- **`#[route(METHOD, "/path", when(..))]`** is the general form of a route attribute, with `METHOD` one of `GET`, `POST`, `PUT`, `PATCH` or `DELETE` in any case. `#[get(..)]`, `#[post(..)]`, `#[put(..)]`, `#[patch(..)]` and `#[delete(..)]` are shorthands for it, and it works wherever they do: on a lone function, on a method of a controller and on a function of a `#[routes]` module.
 - **`#[get("/path", when(..))] async fn name(..)`** on a lone function makes `name` a unit struct that implements `Endpoint`, with `name.route()` building the route at the path. The body stays in a hidden function. A lone function is a complete endpoint: when its guard misses, the request is answered with the guard miss, and it is not handed to another lone function on the same path. To give one path several guarded variants, use a `#[routes]` module.
+
+### Why a module for variants
+
+Two functions are variants of one path only if one generated endpoint sees both, because that endpoint is what extracts each argument type once and runs the guards lazily in order. An attribute macro sees only the item it is on, so something has to group the variants: an `impl` block (`#[controller]`), a module (`#[routes]`), or nothing, in which case each function is its own complete endpoint.
 
 The optional first argument is a path prefix (controller and module); `crate = path` names the crate providing the facade modules `router` and `core` (default `::fast_http`). `#[get]`, `#[post]`, `#[put]`, `#[patch]` and `#[delete]` mark a function as an endpoint. The path may be omitted, as in `#[post]` or `#[post(when(..))]`, for the prefix itself. Several attributes on one function add several endpoints. Functions must be `async fn` and non-generic. The generated `routes()` returns the router, or the `PatternError` of the first malformed pattern.
 

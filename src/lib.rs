@@ -19,7 +19,7 @@ pub use fast_http_core as core;
 pub use fast_http_format as format;
 pub use fast_http_layer as layer;
 #[cfg(feature = "macros")]
-pub use fast_http_macros::{controller, delete, get, patch, post, put, routes};
+pub use fast_http_macros::{controller, delete, get, patch, post, put, route, routes};
 #[cfg(feature = "multipart")]
 pub use fast_http_multipart as multipart;
 pub use fast_http_router as router;

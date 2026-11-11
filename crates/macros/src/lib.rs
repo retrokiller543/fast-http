@@ -122,3 +122,27 @@ macro_rules! standalone_routes {
 }
 
 standalone_routes!(get => Get, post => Post, put => Put, patch => Patch, delete => Delete);
+
+/// The general form of a route: `#[route(METHOD, "/path", when(..))]`.
+///
+/// `METHOD` is `GET`, `POST`, `PUT`, `PATCH` or `DELETE`, in any case. `#[get(..)]` and its
+/// siblings are shorthands for it, and it works wherever they do: on a lone free function, on a
+/// method of a [`controller`] and on a function of a [`routes`] module.
+///
+/// ```ignore
+/// #[route(GET, "/health", when(query.contains("deep")))]
+/// async fn deep_health() -> &'static str { "deep" }
+/// ```
+#[proc_macro_attribute]
+pub fn route(args: TokenStream, item: TokenStream) -> TokenStream {
+    let original: proc_macro2::TokenStream = item.clone().into();
+
+    match expand::standalone_route(args.into(), item.into()) {
+        Ok(expanded) => expanded.into(),
+        Err(error) => {
+            let error = error.into_compile_error();
+
+            quote::quote!(#original #error).into()
+        }
+    }
+}

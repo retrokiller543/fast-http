@@ -3,7 +3,7 @@
 use bytes::Bytes;
 use fast_http::{
     core::Routes,
-    get, post,
+    get, post, route,
     router::{Route, Router},
     routes,
 };
@@ -30,6 +30,16 @@ async fn echo_upper() -> &'static str {
     "upper"
 }
 
+#[route(GET, "/general", when(query.contains("on")))]
+async fn general() -> &'static str {
+    "general"
+}
+
+#[route(post, "/general-post")]
+async fn general_post() -> &'static str {
+    "posted"
+}
+
 #[routes("/items")]
 mod items {
     use std::num::NonZeroU64;
@@ -51,6 +61,16 @@ mod items {
     #[get("/{id}")]
     async fn show(Path(id): Path<NonZeroU64>) -> String {
         format!("item:{id}")
+    }
+
+    #[route(GET, "/mixed", when(query.contains("m")))]
+    async fn mixed_guarded() -> &'static str {
+        "mixed guarded"
+    }
+
+    #[get("/mixed")]
+    async fn mixed() -> &'static str {
+        "mixed"
     }
 
     #[get(when(headers.contains_key("x-all")))]
@@ -213,5 +233,34 @@ async fn routes_module_merges_into_a_router() {
     assert_eq!(
         send(&router, Method::GET, "/items/9", &[], "").await.1,
         "item:9"
+    );
+}
+
+#[tokio::test]
+async fn route_general_form_works_on_lone_functions() {
+    let router = Router::new()
+        .route(general.route().expect("valid route"))
+        .route(general_post.route().expect("valid route"));
+
+    let hit = send(&router, Method::GET, "/general?on", &[], "").await;
+    let post = send(&router, Method::POST, "/general-post", &[], "").await;
+
+    assert_eq!(hit.1, "general");
+    assert_eq!(post.1, "posted");
+}
+
+#[tokio::test]
+async fn route_general_form_mixes_with_the_shorthands_in_a_module() {
+    let router = items::routes().expect("valid routes");
+
+    assert_eq!(
+        send(&router, Method::GET, "/items/mixed?m", &[], "")
+            .await
+            .1,
+        "mixed guarded"
+    );
+    assert_eq!(
+        send(&router, Method::GET, "/items/mixed", &[], "").await.1,
+        "mixed"
     );
 }

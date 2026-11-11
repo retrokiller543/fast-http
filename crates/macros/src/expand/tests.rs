@@ -634,16 +634,16 @@ fn recover_keeps_the_impl_without_route_attributes_and_adds_the_error() {
     let item = quote! {
         impl Api {
             #[doc = "kept"]
-            #[get("/a", when(q.))]
-            async fn a(&self, q: QueryParams<'_>) -> String { String::new() }
+            #[get("/a")]
+            fn a(&self, q: QueryParams<'_>) -> String { String::new() }
         }
     };
     let error = controller(quote!(), item.clone())
         .map(drop)
-        .expect_err("a half-typed guard");
+        .expect_err("a sync handler");
     let out = recover(item, error).to_string().replace(' ', "");
 
-    assert!(out.contains("asyncfna(&self,q:QueryParams<'_>)->String"));
+    assert!(out.contains("fna(&self,q:QueryParams<'_>)->String"));
     assert!(out.contains("#[doc=\"kept\"]"));
     assert!(!out.contains("#[get"));
     assert!(out.contains("compile_error"));
@@ -835,14 +835,147 @@ fn standalone_rejects_a_receiver_and_a_sync_function() {
 fn recover_keeps_a_module_without_route_attributes() {
     let item = quote! {
         mod items {
-            #[get("/a", when(q.))]
-            async fn a() -> String { String::new() }
+            #[get("/a")]
+            fn a() -> String { String::new() }
         }
     };
     let error = routes(quote!(), item.clone()).map(drop).expect_err("error");
     let out = recover(item, error).to_string().replace(' ', "");
 
-    assert!(out.contains("asyncfna()->String"));
+    assert!(out.contains("fna()->String"));
     assert!(!out.contains("#[get"));
     assert!(out.contains("compile_error"));
+}
+
+#[test]
+fn expand_half_typed_guard_still_expands_everything_and_reports_the_error() {
+    let out = expand(
+        quote!("/chat"),
+        quote! {
+            impl Api {
+                #[post(when(params.))]
+                async fn stream(&self, Query(params): Query<Params>) -> String { String::new() }
+
+                #[post(when(q.fast))]
+                async fn other(&self, q: QueryParams<'_>) -> String { String::new() }
+
+                #[post]
+                async fn plain(&self) -> String { String::new() }
+            }
+        },
+    );
+
+    assert!(out.contains("compile_error"));
+    assert!(out.contains("letQuery(params)=__rt::fill(&mut__s0"));
+    assert!(out.contains("if!(params.__incomplete)"));
+    assert!(out.contains("if!(q.fast)"));
+    assert!(out.contains("pubfnroutes("));
+}
+
+#[test]
+fn expand_guard_ending_in_an_operator_is_completed_with_false() {
+    let out = expand(
+        quote!(),
+        quote! {
+            impl Api {
+                #[get(when(q.a &&))]
+                async fn a(&self, q: QueryParams<'_>) -> String { String::new() }
+            }
+        },
+    );
+
+    assert!(out.contains("if!(q.a&&false)"));
+    assert!(out.contains("compile_error"));
+}
+
+#[test]
+fn expand_guard_that_cannot_be_repaired_becomes_false_and_keeps_the_others() {
+    let out = expand(
+        quote!(),
+        quote! {
+            impl Api {
+                #[get(when(let, q.ok))]
+                async fn a(&self, q: QueryParams<'_>) -> String { String::new() }
+            }
+        },
+    );
+
+    assert!(out.contains("if!(false)"));
+    assert!(out.contains("if!(q.ok)"));
+    assert!(out.contains("compile_error"));
+}
+
+#[test]
+fn expand_guards_with_commas_inside_closures_are_not_split() {
+    let out = expand(
+        quote!(),
+        quote! {
+            impl Api {
+                #[get(when(items.iter().fold(0, |sum, n| sum + n) > 3, flag))]
+                async fn a(&self, items: Items, flag: Flag) -> String { String::new() }
+            }
+        },
+    );
+
+    assert!(!out.contains("compile_error"));
+    assert!(out.contains("fold(0,|sum,n|sum+n)>3"));
+}
+
+#[test]
+fn route_general_form_inside_a_controller_matches_the_shorthand() {
+    let general = expand(
+        quote!("/chat"),
+        quote! {
+            impl Api {
+                #[route(POST, when(q.x))]
+                async fn a(&self, q: QueryParams<'_>) -> String { String::new() }
+            }
+        },
+    );
+    let shorthand = expand(
+        quote!("/chat"),
+        quote! {
+            impl Api {
+                #[post(when(q.x))]
+                async fn a(&self, q: QueryParams<'_>) -> String { String::new() }
+            }
+        },
+    );
+
+    assert_eq!(general, shorthand);
+}
+
+#[test]
+fn route_general_form_on_a_lone_function_matches_the_shorthand() {
+    let general = standalone_route(
+        quote!(GET, "/deep", when(query.contains("full"))),
+        quote! { async fn deep() -> String { String::new() } },
+    )
+    .expect("expands")
+    .to_string();
+    let shorthand = standalone(
+        HttpMethod::Get,
+        quote!("/deep", when(query.contains("full"))),
+        quote! { async fn deep() -> String { String::new() } },
+    )
+    .expect("expands")
+    .to_string();
+
+    assert_eq!(general, shorthand);
+}
+
+#[test]
+fn route_general_form_is_stripped_like_the_shorthand_on_recovery() {
+    let item = quote! {
+        impl Api {
+            #[route(GET, "/a")]
+            fn a(&self) -> String { String::new() }
+        }
+    };
+    let error = controller(quote!(), item.clone())
+        .map(drop)
+        .expect_err("sync");
+    let out = recover(item, error).to_string().replace(' ', "");
+
+    assert!(!out.contains("#[route"));
 }

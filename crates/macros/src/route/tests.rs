@@ -90,3 +90,68 @@ fn name_and_constant_match_the_router_and_http() {
     assert_eq!(HttpMethod::Delete.name(), "delete");
     assert_eq!(HttpMethod::Delete.constant(), "DELETE");
 }
+
+#[test]
+fn parse_valid_guards_report_no_errors() {
+    let route = parse(parse_quote!(#[get(when(a.x, b.y))])).expect("parses");
+
+    assert!(route.errors.is_empty());
+    assert_eq!(route.guards.len(), 2);
+}
+
+#[test]
+fn parse_a_broken_guard_is_recorded_and_the_others_survive() {
+    let route = parse(parse_quote!(#[get(when(a.x, b., c.z))])).expect("parses");
+
+    assert_eq!(route.guards.len(), 3);
+    assert_eq!(route.errors.len(), 1);
+}
+
+#[test]
+fn parse_a_trailing_comma_in_when_is_accepted() {
+    let route = parse(parse_quote!(#[get(when(a.x,))])).expect("parses");
+
+    assert_eq!(route.guards.len(), 1);
+    assert!(route.errors.is_empty());
+}
+
+#[test]
+fn route_general_form_takes_the_method_first() {
+    let route = parse(parse_quote!(#[route(POST, "/chat", when(a.x))])).expect("parses");
+
+    assert!(route.method == HttpMethod::Post);
+    assert_eq!(route.path.value(), "/chat");
+    assert_eq!(route.guards.len(), 1);
+}
+
+#[test]
+fn route_general_form_accepts_any_case_and_an_omitted_path() {
+    let route = parse(parse_quote!(#[route(get, when(a.x))])).expect("parses");
+
+    assert!(route.method == HttpMethod::Get);
+    assert_eq!(route.path.value(), "");
+}
+
+#[test]
+fn route_general_form_with_only_a_method_is_a_bare_route() {
+    let route = parse(parse_quote!(#[route(Delete)])).expect("parses");
+
+    assert!(route.method == HttpMethod::Delete);
+}
+
+#[test]
+fn route_unknown_method_is_an_error() {
+    assert!(failure(parse_quote!(#[route(FETCH, "/a")])).contains("expected GET, POST"));
+}
+
+#[test]
+fn route_without_arguments_is_an_error() {
+    assert!(failure(parse_quote!(#[route])).contains("expected `#[route(METHOD"));
+}
+
+#[test]
+fn is_route_recognizes_the_general_form() {
+    assert!(RouteAttr::is_route(&parse_quote!(#[route(GET, "/a")])));
+    assert!(RouteAttr::is_route(&parse_quote!(#[get("/a")])));
+    assert!(!RouteAttr::is_route(&parse_quote!(#[doc = "x"])));
+}

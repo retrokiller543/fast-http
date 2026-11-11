@@ -10,7 +10,7 @@ use crate::{
     args::ControllerArgs,
     guard::{analyze, bindings},
     path::join,
-    route::{HttpMethod, RouteAttr},
+    route::{HttpMethod, RouteAttr, split_method},
 };
 
 mod dispatcher;
@@ -40,6 +40,7 @@ pub fn controller(args: TokenStream, item: TokenStream) -> syn::Result<TokenStre
 
     let mut handlers = Vec::new();
     let mut variants = Vec::new();
+    let mut errors = Vec::new();
 
     for member in &mut item.items {
         if let ImplItem::Fn(method) = member {
@@ -50,6 +51,7 @@ pub fn controller(args: TokenStream, item: TokenStream) -> syn::Result<TokenStre
                 &args,
                 &mut handlers,
                 &mut variants,
+                &mut errors,
             )?;
         }
     }
@@ -72,8 +74,9 @@ pub fn controller(args: TokenStream, item: TokenStream) -> syn::Result<TokenStre
     item.items.push(syn::parse2(routes)?);
 
     let extra = generated.extra;
+    let errors = errors.iter().map(Error::to_compile_error);
 
-    Ok(quote!(#item #(#extra)*))
+    Ok(quote!(#item #(#extra)* #(#errors)*))
 }
 
 /// Expands `#[routes(args)]` applied to an inline module `item` of free functions.
@@ -88,6 +91,7 @@ pub fn routes(args: TokenStream, item: TokenStream) -> syn::Result<TokenStream> 
     };
     let mut handlers = Vec::new();
     let mut variants = Vec::new();
+    let mut errors = Vec::new();
 
     for member in items.iter_mut() {
         if let Item::Fn(function) = member {
@@ -98,6 +102,7 @@ pub fn routes(args: TokenStream, item: TokenStream) -> syn::Result<TokenStream> 
                 &args,
                 &mut handlers,
                 &mut variants,
+                &mut errors,
             )?;
         }
     }
@@ -116,6 +121,10 @@ pub fn routes(args: TokenStream, item: TokenStream) -> syn::Result<TokenStream> 
 
     items.push(syn::parse2(routes)?);
 
+    for error in &errors {
+        items.extend(syn::parse2::<syn::File>(error.to_compile_error())?.items);
+    }
+
     Ok(quote!(#module))
 }
 
@@ -129,6 +138,7 @@ pub fn standalone(
     item: TokenStream,
 ) -> syn::Result<TokenStream> {
     let route = RouteAttr::from_args(method, args)?;
+    let errors: Vec<_> = route.errors.iter().map(Error::to_compile_error).collect();
     let mut function: ItemFn = syn::parse2(item)?;
     let krate: syn::Path = syn::parse_quote!(::fast_http);
 
@@ -180,6 +190,8 @@ pub fn standalone(
 
         #items
 
+        #(#errors)*
+
         impl #name {
             /// The route at this function's path, with this function as its endpoint.
             #vis fn route(
@@ -192,6 +204,13 @@ pub fn standalone(
             }
         }
     })
+}
+
+/// Expands the general `#[route(METHOD, "/path", when(..))]` applied to a free function `item`.
+pub fn standalone_route(args: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
+    let (method, rest) = syn::parse::Parser::parse2(split_method, args)?;
+
+    standalone(method, rest, item)
 }
 
 /// What `#[controller]` and `#[routes]` emit when they cannot expand: the item as written, minus
@@ -300,13 +319,19 @@ fn collect(
     args: &ControllerArgs,
     handlers: &mut Vec<Handler>,
     variants: &mut Vec<Variant>,
+    errors: &mut Vec<Error>,
 ) -> syn::Result<()> {
     let mut kept = Vec::new();
     let mut routes = Vec::new();
 
     for attr in std::mem::take(attrs) {
         match RouteAttr::from_attribute(&attr) {
-            Some(parsed) => routes.push(parsed?),
+            Some(parsed) => {
+                let mut parsed = parsed?;
+
+                errors.append(&mut parsed.errors);
+                routes.push(parsed);
+            }
             None => kept.push(attr),
         }
     }
