@@ -361,10 +361,23 @@ fn guard_step(
     });
     let lets = guard.uses.iter().map(|used| {
         let slot = slot_var(slots[*used]);
-        let pat = binding_pattern(&handler.params[*used].pat);
         let make = extraction(rt, handler, *used);
+        let fill = quote!(#rt::fill(&mut #slot, #make).await?);
 
-        quote!(let #pat = #rt::fill(&mut #slot, #make).await?;)
+        match plain_binding(&handler.params[*used].pat) {
+            Some(name) => quote! {
+                let #name = {
+                    use #rt::{ViewInner as _, ViewSelf as _};
+
+                    (&#rt::Guarded(#fill)).view()
+                };
+            },
+            None => {
+                let pat = &handler.params[*used].pat;
+
+                quote!(let #pat = #fill;)
+            }
+        }
     });
 
     quote! {
@@ -379,14 +392,15 @@ fn guard_step(
     }
 }
 
-fn binding_pattern(pat: &Pat) -> TokenStream {
+/// The name a parameter is bound to when it is a plain name, such as `job` in `job: Body<Job>`.
+///
+/// A guard sees such a parameter through `fast_http_core::Transparent` when its
+/// extractor is one, so `job` reads as `&Job`. A destructuring pattern, such as `Query(params)`,
+/// is bound as written instead.
+fn plain_binding(pat: &Pat) -> Option<&Ident> {
     match pat {
-        Pat::Ident(ident) if ident.subpat.is_none() => {
-            let name = &ident.ident;
-
-            quote!(#name)
-        }
-        other => quote!(#other),
+        Pat::Ident(ident) if ident.subpat.is_none() => Some(&ident.ident),
+        _ => None,
     }
 }
 

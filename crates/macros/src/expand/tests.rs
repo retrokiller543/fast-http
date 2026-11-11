@@ -552,7 +552,40 @@ fn expand_a_parameter_with_the_reserved_name_takes_precedence() {
     );
 
     assert!(!out.contains("letquery=::fast_http::core::QueryParams::of"));
-    assert!(out.contains("letquery=__rt::fill(&mut__s0"));
+    assert!(out.contains("letquery={use"));
+    assert!(out.contains("(&__rt::Guarded(__rt::fill(&mut__s0"));
+}
+
+#[test]
+fn expand_plain_parameter_is_seen_by_the_guard_through_its_view() {
+    let out = expand(
+        quote!(),
+        quote! {
+            impl Api {
+                #[post(when(matches!(job, Job::Fast)))]
+                async fn a(&self, job: Body<Job>) -> String { String::new() }
+            }
+        },
+    );
+
+    assert!(out.contains("letjob={use__rt::{ViewInneras_,ViewSelfas_};"));
+    assert!(out.contains("(&__rt::Guarded(__rt::fill(&mut__s0"));
+    assert!(out.contains(".view()"));
+}
+
+#[test]
+fn expand_destructured_parameter_is_bound_as_written() {
+    let out = expand(
+        quote!(),
+        quote! {
+            impl Api {
+                #[get(when(q.x))]
+                async fn a(&self, Query(q): Query<Params>) -> String { String::new() }
+            }
+        },
+    );
+
+    assert!(out.contains("letQuery(q)=__rt::fill(&mut__s0"));
 }
 
 #[test]
@@ -575,7 +608,7 @@ fn expand_reserved_views_are_decided_per_variant() {
             .count(),
         1
     );
-    assert_eq!(out.matches("letquery=__rt::fill(&mut__s").count(), 1);
+    assert_eq!(out.matches("letquery={use").count(), 1);
 }
 
 #[test]

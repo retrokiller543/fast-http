@@ -20,11 +20,20 @@ pub(crate) trait Wrapper: Sized {
 /// Implements the std traits of a wrapper whose carried value is its parameter `T`, bounded on `T`
 /// only, given its [`Wrapper`] impl.
 ///
-/// `access` gives `Deref`, `DerefMut`, `AsRef`, `AsMut`, `From<T>` and `into_inner`, for wrappers
+/// `access` gives `Transparent` (route guards see the value), `Deref`, `DerefMut`, `AsRef`,
+/// `AsMut`, `From<T>` and `into_inner`, for wrappers
 /// that hold more than the value. `value` adds `Debug`, `Clone`, `Copy`, `PartialEq`, `Eq`,
 /// `PartialOrd`, `Ord`, `Hash` and `Default`, for wrappers that are nothing but the value.
 macro_rules! transparent {
     (access $name:ident [$($params:tt)*] [$($args:tt)*]) => {
+        impl<$($params)*> ::fast_http_core::Transparent for $name<$($args)*> {
+            type Inner = T;
+
+            fn inner(&self) -> &T {
+                $crate::wrapper::Wrapper::get(self)
+            }
+        }
+
         impl<$($params)*> ::std::ops::Deref for $name<$($args)*> {
             type Target = T;
 

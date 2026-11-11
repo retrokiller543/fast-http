@@ -8,11 +8,13 @@ mod extension;
 mod path;
 mod peer;
 mod query;
+mod transparent;
 
 pub use extension::Extension;
 pub use path::{FromParams, FromParamsAt, FromPathParam, Path, PathArgs, PathParams, Segments};
 pub use peer::{PeerAddr, WithPeer, with_peer};
 pub use query::QueryParams;
+pub use transparent::Transparent;
 
 /// Extracts a value from the request head; any number may precede a [`FromRequest`].
 pub trait FromParts: Sized {

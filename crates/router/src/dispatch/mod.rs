@@ -7,7 +7,8 @@
 //! reads it takes the same body type, which is parsed lazily, once.
 
 use fast_http_core::{
-    ErrorHandler, FromParamsAt, HandlerError, IntoOutcome, PathParams, Rejection, ReqBody, Response,
+    ErrorHandler, FromParamsAt, HandlerError, IntoOutcome, PathParams, Rejection, ReqBody,
+    Response, Transparent,
 };
 use http::{StatusCode, request::Parts};
 
@@ -109,6 +110,48 @@ pub fn guard_miss() -> HandlerError {
     HandlerError::new(Rejection::GuardMiss {
         status: StatusCode::BAD_REQUEST,
     })
+}
+
+/// A guard's borrow of an argument, resolved to what the guard sees by [`ViewInner`] or
+/// [`ViewSelf`].
+///
+/// `(&Guarded(arg)).view()` picks [`ViewInner`] when the argument is [`Transparent`], so a guard
+/// on `job: Body<Job>` reads `&Job`, and falls back to [`ViewSelf`] otherwise. The choice is made
+/// by method resolution at compile time.
+pub struct Guarded<'a, T>(pub &'a T);
+
+/// What a guard sees of a [`Transparent`] argument: the value it carries.
+pub trait ViewInner<'a> {
+    /// The carried value.
+    type Out;
+
+    /// Borrows the carried value.
+    fn view(&self) -> &'a Self::Out;
+}
+
+impl<'a, T: Transparent> ViewInner<'a> for Guarded<'a, T> {
+    type Out = T::Inner;
+
+    fn view(&self) -> &'a T::Inner {
+        self.0.inner()
+    }
+}
+
+/// What a guard sees of any other argument: the argument itself.
+pub trait ViewSelf<'a> {
+    /// The argument.
+    type Out;
+
+    /// Borrows the argument.
+    fn view(&self) -> &'a Self::Out;
+}
+
+impl<'a, T> ViewSelf<'a> for &Guarded<'a, T> {
+    type Out = T;
+
+    fn view(&self) -> &'a T {
+        self.0
+    }
 }
 
 /// An empty argument slot of type `T`, so a generated endpoint can name the type it holds.
