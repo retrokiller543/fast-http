@@ -13,7 +13,7 @@ async fn echo(upgrade: WebSocketUpgrade) -> Response {
         .protocols(["chat.v2", "chat.v1"])
         .on_upgrade(|mut socket| async move {
             while let Some(Ok(message)) = socket.recv().await {
-                if matches!(message, Message::Close(_)) {
+                if !matches!(message, Message::Text(_) | Message::Binary(_)) {
                     continue;
                 }
 
@@ -27,7 +27,7 @@ async fn echo(upgrade: WebSocketUpgrade) -> Response {
 let routes = Router::new().route(Route::new("/ws")?.get(echo));
 ```
 
-When the client closes first, `recv` yields its `Message::Close` and queues the reply; keep calling `recv` until it returns `None`, which sends that reply, instead of dropping the socket at once. To close from the server side, `socket.close()` or `socket.close_with(frame)` sends the close frame and waits up to `CLOSE_TIMEOUT` (5 s) for the client's answer.
+Only text and binary messages are echoed: pings are answered automatically, and echoing control frames back can start a loop with a peer that does the same. When the client closes first, `recv` yields its `Message::Close` and queues the reply; keep calling `recv` until it returns `None`, which sends that reply, instead of dropping the socket at once. To close from the server side, `socket.close()` or `socket.close_with(frame)` sends the close frame and waits for the client's answer, with `CLOSE_TIMEOUT` (5 s) bounding the whole handshake, sending included; past it the socket is dropped.
 
 - `WebSocketUpgrade` is a head extractor. It validates the RFC 6455 handshake and rejects anything else with a typed `WebSocketUpgradeRejection` (400, 405, 426 or 500). `Option<WebSocketUpgrade>` serves a plain response on the same path.
 - `protocols` takes the server's subprotocols in preference order and picks the first the client offered; `selected_protocol()` shows the choice before `on_upgrade`.

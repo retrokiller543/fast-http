@@ -21,7 +21,7 @@ async fn echo(upgrade: WebSocketUpgrade) -> CoreResponse {
         .protocols(["chat.v2", "chat.v1"])
         .on_upgrade(|mut socket| async move {
             while let Some(Ok(message)) = socket.recv().await {
-                if matches!(message, Message::Close(_)) {
+                if !matches!(message, Message::Text(_) | Message::Binary(_)) {
                     continue;
                 }
 

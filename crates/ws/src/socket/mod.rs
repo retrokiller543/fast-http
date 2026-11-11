@@ -102,28 +102,37 @@ impl<S: AsyncRead + AsyncWrite + Unpin> WebSocket<S> {
     }
 
     /// Sends the close frame and reads, discarding anything that is not the peer's close reply,
-    /// until the connection ends or [`CLOSE_TIMEOUT`] passes.
+    /// until the connection ends, all within one [`CLOSE_TIMEOUT`].
     ///
-    /// When a close is already under way, because the peer closed first, there is nothing to send
-    /// and the reading flushes the reply that is queued.
+    /// The deadline covers sending too, which flushes and can stall on a peer that stopped
+    /// reading; when it passes, the socket is dropped, which frees its admission permit. When a
+    /// close is already under way, because the peer closed first, there is nothing to send and
+    /// the reading flushes the reply that is queued.
     async fn close_handshake(mut self, frame: Option<CloseFrame>) -> Result<(), Error> {
-        match self.inner.send(Message::Close(frame).into_raw()).await {
+        let handshake = async {
+            match self.inner.send(Message::Close(frame).into_raw()).await {
+                Ok(())
+                | Err(
+                    tungstenite::Error::ConnectionClosed
+                    | tungstenite::Error::AlreadyClosed
+                    | tungstenite::Error::Protocol(ProtocolError::SendAfterClosing),
+                ) => {}
+                Err(error) => return Err(Error(error)),
+            }
+
+            while let Some(Ok(_)) = self.inner.next().await {}
+
             Ok(())
-            | Err(
-                tungstenite::Error::ConnectionClosed
-                | tungstenite::Error::AlreadyClosed
-                | tungstenite::Error::Protocol(ProtocolError::SendAfterClosing),
-            ) => {}
-            Err(error) => return Err(Error(error)),
+        };
+
+        match tokio::time::timeout(CLOSE_TIMEOUT, handshake).await {
+            Ok(result) => result,
+            Err(_) => {
+                tracing::debug!(target: TRACE_TARGET, "websocket close handshake did not finish in time");
+
+                Ok(())
+            }
         }
-
-        let reply = async { while let Some(Ok(_)) = self.inner.next().await {} };
-
-        if tokio::time::timeout(CLOSE_TIMEOUT, reply).await.is_err() {
-            tracing::debug!(target: TRACE_TARGET, "websocket peer did not answer the close frame in time");
-        }
-
-        Ok(())
     }
 }
 
