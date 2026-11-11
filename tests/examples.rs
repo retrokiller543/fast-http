@@ -12,7 +12,7 @@ mod routes_example;
 #[path = "../examples/controller.rs"]
 mod controller_example;
 
-#[cfg(feature = "macros")]
+#[cfg(all(feature = "macros", feature = "form"))]
 #[path = "../examples/standalone.rs"]
 mod standalone_example;
 
@@ -216,7 +216,7 @@ async fn controller_body_guard_without_a_receiver_creates_only_the_allowed_item(
     assert_eq!(refused.0, StatusCode::BAD_REQUEST);
 }
 
-#[cfg(feature = "macros")]
+#[cfg(all(feature = "macros", feature = "form"))]
 #[tokio::test]
 async fn standalone_lone_functions_are_complete_endpoints() {
     let router = standalone_example::app().expect("routes");
@@ -230,7 +230,7 @@ async fn standalone_lone_functions_are_complete_endpoints() {
     assert_eq!(refused.0, StatusCode::BAD_REQUEST);
 }
 
-#[cfg(feature = "macros")]
+#[cfg(all(feature = "macros", feature = "form"))]
 #[tokio::test]
 async fn standalone_endpoints_on_one_route_fall_through() {
     let router = standalone_example::app().expect("routes");
@@ -242,7 +242,7 @@ async fn standalone_endpoints_on_one_route_fall_through() {
     assert_eq!(anonymous.1, "hello, world");
 }
 
-#[cfg(feature = "macros")]
+#[cfg(all(feature = "macros", feature = "form"))]
 #[tokio::test]
 async fn standalone_function_returns_data_borrowed_from_its_path() {
     let router = standalone_example::app().expect("routes");
@@ -252,7 +252,19 @@ async fn standalone_function_returns_data_borrowed_from_its_path() {
     assert_eq!(echoed.1, "ada");
 }
 
-#[cfg(feature = "macros")]
+#[cfg(all(feature = "macros", feature = "form"))]
+#[tokio::test]
+async fn standalone_query_borrows_until_decoding_is_needed() {
+    let router = standalone_example::app().expect("routes");
+
+    let plain = send(&router, Method::GET, "/search?term=ada&page=2", &[], "").await;
+    let encoded = send(&router, Method::GET, "/search?term=ada%20lovelace", &[], "").await;
+
+    assert_eq!(plain.1, "ada (borrowed), page 2");
+    assert_eq!(encoded.1, "ada lovelace (decoded), page 1");
+}
+
+#[cfg(all(feature = "macros", feature = "form"))]
 #[tokio::test]
 async fn standalone_module_variants_and_ordering() {
     let router = standalone_example::app().expect("routes");

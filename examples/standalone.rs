@@ -8,6 +8,8 @@
 //! curl http://127.0.0.1:3000/greet
 //! curl 'http://127.0.0.1:3000/greet?name=ada'
 //! curl http://127.0.0.1:3000/echo/ada
+//! curl 'http://127.0.0.1:3000/search?term=ada&page=2'
+//! curl 'http://127.0.0.1:3000/search?term=ada%20lovelace'
 //! curl http://127.0.0.1:3000/items
 //! curl -H 'x-all: 1' http://127.0.0.1:3000/items
 //! curl http://127.0.0.1:3000/items/0
@@ -24,16 +26,22 @@
 //! like the methods of a `#[controller]`. Routes are ordered most specific first, so
 //! `/items/orders` wins over `/items/{id}` whatever order they are declared in.
 //!
+//! `Query<T>` owns what it reads, or borrows from the request when its fields are
+//! `#[serde(borrow)] Cow<'a, str>`: `/search` copies `term` only when `%20` or `+` changes it.
+//!
 //! A handler may return data borrowed from its arguments, as `echo` does: the request outlives
 //! the handler call, so `-> &str` is valid and is copied into the response.
 //!
 //! The one rule for bodies: variants of one method and path that read the body must all take the
 //! same body type. If a body can take several shapes, make it one enum and guard on its variants.
 
-use std::net::SocketAddr;
+use std::{borrow::Cow, net::SocketAddr};
+
+use serde::Deserialize;
 
 use fast_http::{
     core::{EndpointSet, Path, QueryParams},
+    format::Query,
     get,
     router::{PatternError, Route, RouteList, Router},
     routes,
@@ -59,6 +67,24 @@ async fn greet_named(query: QueryParams<'_>) -> String {
 #[get("/greet")]
 async fn greet() -> &'static str {
     "hello, world"
+}
+
+/// The query of `/search`, whose text borrows from the request while it can.
+#[derive(Deserialize)]
+struct Search<'a> {
+    #[serde(borrow)]
+    term: Cow<'a, str>,
+    page: Option<u32>,
+}
+
+#[get("/search")]
+async fn search(Query(found): Query<Search<'_>>) -> String {
+    let how = match found.term {
+        Cow::Borrowed(_) => "borrowed",
+        Cow::Owned(_) => "decoded",
+    };
+
+    format!("{} ({how}), page {}", found.term, found.page.unwrap_or(1))
 }
 
 #[get("/echo/{name}")]
@@ -129,6 +155,7 @@ pub fn app() -> Result<Router<impl RouteList>, PatternError> {
         .route(admin.route()?)
         .route(standalone_routes()?)
         .route(echo.route()?)
+        .route(search.route()?)
         .merge(items::routes()?))
 }
 
