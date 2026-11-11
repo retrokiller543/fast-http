@@ -20,5 +20,5 @@ pub use error::FormatError;
 pub use format::{Decode, Encode, Format};
 pub use negotiated::Negotiated;
 #[cfg(feature = "form")]
-pub use query::Query;
+pub use query::{Query, RawQuery};
 pub use set::{Cons, DecodeSet, Enabled, EncodeSet, FormatSet, Nil};

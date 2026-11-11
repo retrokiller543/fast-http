@@ -13,7 +13,7 @@ use bytes::Bytes;
 use fast_http::{
     controller,
     core::{FromParts, FromRequest, Path, QueryParams, Rejection, ReqBody, Routes, buffer},
-    format::{Body, Query},
+    format::{Body, Query, RawQuery},
     router::Router,
 };
 use http::{HeaderMap, Method, Request, StatusCode, request::Parts};
@@ -510,4 +510,32 @@ async fn controller_a_parameter_named_headers_wins_whatever_its_type() {
 
     assert_eq!(get(Some(("x-tag", "1"))).await, "tagged");
     assert_eq!(get(None).await, "plain");
+}
+
+#[derive(Deserialize)]
+struct Search<'a> {
+    #[serde(borrow)]
+    term: std::borrow::Cow<'a, str>,
+}
+
+#[fast_http::get("/search")]
+async fn search(raw: RawQuery<'_>) -> Result<String, fast_http::format::FormatError> {
+    let found: Search = raw.deserialize()?;
+
+    Ok(format!(
+        "{}:{}",
+        found.term,
+        matches!(found.term, std::borrow::Cow::Borrowed(_))
+    ))
+}
+
+#[tokio::test]
+async fn raw_query_hands_a_handler_borrowed_fields() {
+    let router = Router::new().route(search.route().expect("valid route"));
+
+    let plain = send(&router, Method::GET, "/search?term=ada", None, "").await;
+    let encoded = send(&router, Method::GET, "/search?term=a%20b", None, "").await;
+
+    assert_eq!(plain.1, "ada:true");
+    assert_eq!(encoded.1, "a b:false");
 }
