@@ -1,6 +1,7 @@
 #![cfg(feature = "macros")]
 
 use std::{
+    convert::Infallible,
     num::NonZeroU64,
     sync::{
         Arc,
@@ -11,7 +12,7 @@ use std::{
 use bytes::Bytes;
 use fast_http::{
     controller,
-    core::{FromRequest, Path, QueryParams, Rejection, ReqBody, Routes, buffer},
+    core::{FromParts, FromRequest, Path, QueryParams, Rejection, ReqBody, Routes, buffer},
     format::Query,
     router::Router,
 };
@@ -53,6 +54,21 @@ impl FromRequest for Second {
 #[derive(Deserialize)]
 struct Params {
     stream: Option<bool>,
+}
+
+/// A head extractor that is neither a `HeaderMap` nor a `QueryParams`.
+struct Tag(&'static str);
+
+impl FromParts for Tag {
+    type Rejection = Infallible;
+
+    fn from_parts(parts: &Parts) -> Result<Self, Infallible> {
+        Ok(Self(if parts.headers.contains_key("x-tag") {
+            "tagged"
+        } else {
+            "plain"
+        }))
+    }
 }
 
 struct Chat {
@@ -110,6 +126,26 @@ impl Chat {
     #[post("/ask")]
     async fn ask(&self, body: First) -> String {
         format!("any:{}", body.0)
+    }
+
+    #[get("/precedence/q", when(query.0 == "tagged"))]
+    async fn query_param_wins(&self, query: Tag) -> &'static str {
+        "tagged"
+    }
+
+    #[get("/precedence/q")]
+    async fn query_param_default(&self) -> &'static str {
+        "plain"
+    }
+
+    #[get("/precedence/h", when(headers.0 == "tagged"))]
+    async fn headers_param_wins(&self, headers: Tag) -> &'static str {
+        "tagged"
+    }
+
+    #[get("/precedence/h")]
+    async fn headers_param_default(&self) -> &'static str {
+        "plain"
     }
 
     #[get("/ambient", when(headers.contains_key("x-a"), query.get("m") == Some("1")))]
@@ -428,4 +464,28 @@ async fn controller_a_parameter_named_like_a_reserved_view_takes_precedence() {
         get("/chat/mode", Some(("x-mode", "other"))).await,
         StatusCode::BAD_REQUEST
     );
+}
+
+#[tokio::test]
+async fn controller_a_parameter_named_query_wins_whatever_its_type() {
+    let get = |header| async move {
+        send(&chat(), Method::GET, "/chat/precedence/q", header, "")
+            .await
+            .1
+    };
+
+    assert_eq!(get(Some(("x-tag", "1"))).await, "tagged");
+    assert_eq!(get(None).await, "plain");
+}
+
+#[tokio::test]
+async fn controller_a_parameter_named_headers_wins_whatever_its_type() {
+    let get = |header| async move {
+        send(&chat(), Method::GET, "/chat/precedence/h", header, "")
+            .await
+            .1
+    };
+
+    assert_eq!(get(Some(("x-tag", "1"))).await, "tagged");
+    assert_eq!(get(None).await, "plain");
 }

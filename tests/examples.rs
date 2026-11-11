@@ -186,3 +186,28 @@ async fn controller_body_that_does_not_parse_is_a_client_error() {
 
     assert!(status.is_client_error());
 }
+
+#[cfg(feature = "macros")]
+#[tokio::test]
+async fn controller_typed_path_variants_handle_zero_separately() {
+    let router = controller_example::app().expect("routes");
+
+    let zero = send(&router, Method::GET, "/items/0", &[], "").await;
+    let seven = send(&router, Method::GET, "/items/7", &[], "").await;
+
+    assert_eq!(zero.1, r#"{"id":0,"version":"bad"}"#);
+    assert_eq!(seven.1, r#"{"id":7,"version":"v1"}"#);
+}
+
+#[cfg(feature = "macros")]
+#[tokio::test]
+async fn controller_body_guard_without_a_receiver_creates_only_the_allowed_item() {
+    let router = controller_example::app().expect("routes");
+
+    let created = send(&router, Method::POST, "/items", &[JSON], r#"{"id":20}"#).await;
+    let refused = send(&router, Method::POST, "/items", &[JSON], r#"{"id":5}"#).await;
+
+    assert_eq!(created.0, StatusCode::CREATED);
+    assert_eq!(created.1, r#"{"id":20,"version":"created"}"#);
+    assert_eq!(refused.0, StatusCode::BAD_REQUEST);
+}
