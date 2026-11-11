@@ -36,14 +36,15 @@ pub fn wrapper_fn(handler: &Handler) -> TokenStream {
 pub fn endpoint(ctx: &Context, handler: &Handler, method: HttpMethod) -> TokenStream {
     let krate = ctx.krate;
     let constructor = format_ident!("{}", method.name());
+    let name = &handler.name;
     let target = if handler.receiver {
         let wrapper = wrapper_name(handler);
 
         quote!(#krate::router::bind(::std::sync::Arc::clone(&self), Self::#wrapper))
-    } else {
-        let name = &handler.name;
-
+    } else if ctx.owner.is_some() {
         quote!(Self::#name)
+    } else {
+        quote!(#name)
     };
 
     quote!(#krate::router::#constructor(#target))

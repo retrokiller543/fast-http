@@ -67,6 +67,13 @@ pub struct RouteAttr {
 }
 
 impl RouteAttr {
+    /// Whether `attr` is a route attribute, without parsing its arguments.
+    pub fn is_route(attr: &Attribute) -> bool {
+        attr.path()
+            .get_ident()
+            .is_some_and(|ident| HttpMethod::named(&ident.to_string()).is_some())
+    }
+
     /// Parses `attr` when it is a route attribute, `None` for any other attribute.
     pub fn from_attribute(attr: &Attribute) -> Option<syn::Result<Self>> {
         let method = attr
@@ -93,6 +100,15 @@ impl RouteAttr {
             guards: Vec::new(),
             when_text: String::new(),
         }
+    }
+
+    /// Parses the arguments of a standalone `#[get(..)]` style attribute on a free function.
+    pub fn from_args(method: HttpMethod, args: TokenStream) -> syn::Result<Self> {
+        if args.is_empty() {
+            return Ok(Self::bare(method));
+        }
+
+        syn::parse::Parser::parse2(|input: ParseStream| Self::parse_args(method, input), args)
     }
 
     fn parse_args(method: HttpMethod, input: ParseStream) -> syn::Result<Self> {

@@ -13,7 +13,7 @@ use bytes::Bytes;
 use fast_http::{
     controller,
     core::{FromParts, FromRequest, Path, QueryParams, Rejection, ReqBody, Routes, buffer},
-    format::Query,
+    format::{Body, Query},
     router::Router,
 };
 use http::{HeaderMap, Method, Request, StatusCode, request::Parts};
@@ -21,7 +21,6 @@ use http_body_util::{BodyExt, Full};
 use serde::Deserialize;
 
 static FIRST_PARSES: AtomicUsize = AtomicUsize::new(0);
-static SECOND_PARSES: AtomicUsize = AtomicUsize::new(0);
 
 async fn text_of<B: ReqBody>(body: B, counter: &AtomicUsize) -> Result<String, Rejection> {
     counter.fetch_add(1, Ordering::SeqCst);
@@ -41,13 +40,19 @@ impl FromRequest for First {
     }
 }
 
-struct Second(String);
+/// A body that can take several shapes: one type, grouped by its variants.
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+enum Job {
+    Fast { units: u32 },
+    Slow { units: u32 },
+}
 
-impl FromRequest for Second {
-    type Rejection = Rejection;
-
-    async fn from_request<B: ReqBody>(_: &Parts, body: B) -> Result<Self, Rejection> {
-        text_of(body, &SECOND_PARSES).await.map(Self)
+impl Job {
+    fn units(&self) -> u32 {
+        match self {
+            Self::Fast { units } | Self::Slow { units } => *units,
+        }
     }
 }
 
@@ -109,13 +114,13 @@ impl Chat {
     }
 
     #[post("/echo", when(headers.contains_key("x-fast")))]
-    async fn echo_fast(&self, headers: &HeaderMap, body: Second) -> String {
+    async fn echo_fast(&self, body: First) -> String {
         format!("fast:{}", body.0)
     }
 
     #[post("/echo")]
-    async fn echo(&self, body: First) -> String {
-        format!("slow:{}", body.0)
+    async fn echo(&self) -> &'static str {
+        "slow"
     }
 
     #[post("/ask", when(body.0 == "fast"))]
@@ -183,14 +188,19 @@ impl Chat {
         format!("static:{}", item.0)
     }
 
-    #[post("/two", when(first.0 == "a"))]
-    async fn two_a(&self, first: First) -> String {
-        format!("a:{}", first.0)
+    #[post("/job", when(matches!(job.value, Job::Fast { .. })))]
+    async fn job_fast(&self, job: Body<Job>) -> String {
+        format!("fast:{}", job.value.units())
     }
 
-    #[post("/two")]
-    async fn two_b(&self, second: Second) -> String {
-        format!("b:{}", second.0)
+    #[post("/job", when(matches!(job.value, Job::Slow { units } if units > 10)))]
+    async fn job_big(&self, job: Body<Job>) -> String {
+        format!("big:{}", job.value.units())
+    }
+
+    #[post("/job")]
+    async fn job_slow(&self, job: Body<Job>) -> String {
+        format!("slow:{}", job.value.units())
     }
 }
 
@@ -320,27 +330,23 @@ async fn controller_combined_guards_must_all_hold() {
 }
 
 #[tokio::test]
-async fn controller_head_guard_failing_never_parses_the_guarded_variants_body() {
+async fn controller_head_guard_failing_never_parses_the_body() {
     FIRST_PARSES.store(0, Ordering::SeqCst);
-    SECOND_PARSES.store(0, Ordering::SeqCst);
 
     let (_, text) = post("/chat/echo", None, "payload").await;
 
-    assert_eq!(text, "slow:payload");
-    assert_eq!(FIRST_PARSES.load(Ordering::SeqCst), 1);
-    assert_eq!(SECOND_PARSES.load(Ordering::SeqCst), 0);
+    assert_eq!(text, "slow");
+    assert_eq!(FIRST_PARSES.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]
-async fn controller_head_guard_passing_parses_only_the_matching_variants_body() {
+async fn controller_head_guard_passing_parses_the_body_once() {
     FIRST_PARSES.store(0, Ordering::SeqCst);
-    SECOND_PARSES.store(0, Ordering::SeqCst);
 
     let (_, text) = post("/chat/echo", Some(("x-fast", "1")), "payload").await;
 
     assert_eq!(text, "fast:payload");
-    assert_eq!(FIRST_PARSES.load(Ordering::SeqCst), 0);
-    assert_eq!(SECOND_PARSES.load(Ordering::SeqCst), 1);
+    assert_eq!(FIRST_PARSES.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
@@ -359,14 +365,30 @@ async fn controller_variants_sharing_a_body_type_extract_it_once() {
     assert_eq!(FIRST_PARSES.load(Ordering::SeqCst), 1);
 }
 
-#[tokio::test]
-async fn controller_variants_with_different_body_types_share_one_buffered_body() {
-    FIRST_PARSES.store(0, Ordering::SeqCst);
-    SECOND_PARSES.store(0, Ordering::SeqCst);
+async fn job(body: &'static str) -> (StatusCode, String) {
+    post(
+        "/chat/job",
+        Some(("content-type", "application/json")),
+        body,
+    )
+    .await
+}
 
-    assert_eq!(post("/chat/two", None, "a").await.1, "a:a");
-    assert_eq!(post("/chat/two", None, "b").await.1, "b:b");
-    assert_eq!(SECOND_PARSES.load(Ordering::SeqCst), 1);
+#[tokio::test]
+async fn controller_one_body_enum_is_grouped_by_guards_on_its_variants() {
+    assert_eq!(job(r#"{"kind":"fast","units":3}"#).await.1, "fast:3");
+    assert_eq!(job(r#"{"kind":"slow","units":30}"#).await.1, "big:30");
+    assert_eq!(job(r#"{"kind":"slow","units":4}"#).await.1, "slow:4");
+}
+
+#[tokio::test]
+async fn controller_a_body_that_fits_no_enum_variant_is_a_client_error() {
+    assert!(
+        job(r#"{"kind":"unknown","units":1}"#)
+            .await
+            .0
+            .is_client_error()
+    );
 }
 
 #[tokio::test]

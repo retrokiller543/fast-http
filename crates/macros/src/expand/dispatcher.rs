@@ -5,15 +5,27 @@ use quote::{ToTokens, format_ident, quote};
 use syn::{Ident, Lifetime, Pat, Type};
 
 use super::{
-    model::{Context, Handler, Param, Variant},
+    model::{Context, Handler, Variant},
     partition::Partition,
 };
 use crate::guard::{Analyzed, Reserved, analyze};
 
-/// A step of a variant's plan: extract one argument, or evaluate one guard.
-enum Step {
-    Extract(usize),
-    Guard(usize),
+/// How the generated endpoint struct is named and exposed.
+pub struct Naming {
+    /// The struct's name, or `None` to derive one from the controller and method.
+    pub name: Option<Ident>,
+    /// The struct's visibility; private when empty.
+    pub vis: TokenStream,
+}
+
+impl Naming {
+    /// A private struct with a derived name.
+    pub fn derived() -> Self {
+        Self {
+            name: None,
+            vis: TokenStream::new(),
+        }
+    }
 }
 
 /// The generated endpoint for a method and path with guarded variants: its items and the
@@ -30,22 +42,29 @@ pub struct Dispatcher {
 /// Work happens as late as it can and only once. Within a variant, arguments are extracted in the
 /// order its guards need them, so a guard on the head runs before any body is parsed. An
 /// argument type that several variants take is extracted once and shared. The request body is
-/// buffered only when different variants need different body types.
+/// never buffered: every variant that reads it must take the same body type, which is parsed
+/// lazily, once.
 pub fn dispatcher(
     ctx: &Context,
     handlers: &[Handler],
     partition: &Partition,
+    naming: Naming,
 ) -> syn::Result<Dispatcher> {
     let krate = ctx.krate;
     let rt = quote!(#krate::router::dispatch);
+    let alias = quote!(__rt);
     let table = SlotTable::build(handlers, &partition.variants);
-    let name = struct_name(ctx, handlers, partition);
+    let derived = naming.name.is_none();
+    let name = naming
+        .name
+        .unwrap_or_else(|| struct_name(ctx, handlers, partition));
+    let vis = &naming.vis;
     let mut blocks = Vec::new();
 
     for (index, variant) in partition.variants.iter().enumerate() {
         blocks.push(variant_block(
             ctx,
-            &rt,
+            &alias,
             handlers,
             variant,
             table.slots(index),
@@ -57,19 +76,53 @@ pub fn dispatcher(
         .variants
         .last()
         .is_some_and(|variant| !variant.guards.is_empty());
-    let miss = last_guarded.then(|| quote!(#rt::guard_miss(__parts, __handler).await));
+    let miss = last_guarded.then(|| quote!(::std::result::Result::Err(__rt::guard_miss())));
     let slot_vars: Vec<_> = (0..table.types.len()).map(slot_var).collect();
-    let multi = table.multi_expression(&rt);
+    let slot_types = &table.types;
+    let rule = table.body_rule(&rt);
+    let generics = ctx.owner.as_ref().map(|owner| owner.generics);
+    let checked_early = generics.is_none_or(|generics| generics.params.is_empty());
+    let early_rule = rule
+        .as_ref()
+        .filter(|_| checked_early)
+        .map(|rule| quote!(const _: () = #rule;));
+    let inline_rule = rule
+        .as_ref()
+        .filter(|_| !checked_early)
+        .map(|rule| quote!(const { #rule };));
     let method = format_ident!("{}", partition.method.constant());
     let core = quote!(#krate::core);
-    let (impl_generics, type_generics, where_clause) = ctx.generics.split_for_impl();
-    let self_ty = ctx.self_ty;
-    let items = quote! {
-        #[doc(hidden)]
-        #[allow(non_camel_case_types)]
-        struct #name #impl_generics #where_clause {
-            this: ::std::sync::Arc<#self_ty>,
+    let (impl_generics, type_generics, where_clause) = match generics {
+        Some(generics) => {
+            let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
+
+            (
+                quote!(#impl_generics),
+                quote!(#type_generics),
+                quote!(#where_clause),
+            )
         }
+        None => (TokenStream::new(), TokenStream::new(), TokenStream::new()),
+    };
+    let (fields, this_binding, construct) = match &ctx.owner {
+        Some(owner) => {
+            let self_ty = owner.self_ty;
+
+            (
+                quote!({ this: ::std::sync::Arc<#self_ty>, }),
+                quote!(let __this = &self.this;),
+                quote!(#name { this: ::std::sync::Arc::clone(&self) }),
+            )
+        }
+        None => (quote!(;), TokenStream::new(), quote!(#name)),
+    };
+    let hidden = derived.then(|| quote!(#[doc(hidden)]));
+    let items = quote! {
+        #early_rule
+
+        #hidden
+        #[allow(non_camel_case_types)]
+        #vis struct #name #impl_generics #where_clause #fields
 
         impl #impl_generics #core::Endpoint for #name #type_generics #where_clause {
             fn method(&self) -> &#core::http::Method {
@@ -77,37 +130,47 @@ pub fn dispatcher(
             }
 
             #[allow(unused_variables, unused_mut)]
-            async fn call<'r, B: #core::ReqBody, H: #core::ErrorHandler>(
+            async fn call<'__r, __B: #core::ReqBody, __H: #core::ErrorHandler>(
                 &self,
-                __parts: &'r #core::http::request::Parts,
-                __params: #core::PathParams<'r>,
-                __body: B,
-                __handler: &H,
+                __parts: &'__r #core::http::request::Parts,
+                __params: #core::PathParams<'__r>,
+                __body: __B,
+                __handler: &__H,
             ) -> #core::Response {
-                let __this = &self.this;
-                let __multi = #multi;
-                let mut __source = #rt::BodySource::new(__body, __multi);
-                #( let mut #slot_vars = ::std::option::Option::None; )*
+                use #rt as __rt;
+                #inline_rule
+                #this_binding
+                let mut __source = __rt::BodySource::new(__body);
+                #( let mut #slot_vars = __rt::slot::<#slot_types>(); )*
 
-                #(#blocks)*
-                #miss
+                let __result: ::std::result::Result<#core::Response, #core::HandlerError> = async {
+                    #(#blocks)*
+                    #miss
+                }
+                .await;
+
+                match __result {
+                    ::std::result::Result::Ok(response) => response,
+                    ::std::result::Result::Err(error) => __rt::fail(error, __parts, __handler).await,
+                }
             }
         }
     };
 
     Ok(Dispatcher {
         items,
-        expr: quote!(#name { this: ::std::sync::Arc::clone(&self) }),
+        expr: construct,
     })
 }
 
 fn struct_name(ctx: &Context, handlers: &[Handler], partition: &Partition) -> Ident {
-    let owner = match ctx.self_ty {
-        Type::Path(path) => path.path.segments.last().map_or_else(
+    let owner = match ctx.owner.as_ref().map(|owner| owner.self_ty) {
+        Some(Type::Path(path)) => path.path.segments.last().map_or_else(
             || String::from("Controller"),
             |segment| segment.ident.to_string(),
         ),
-        _ => String::from("Controller"),
+        Some(_) => String::from("Controller"),
+        None => String::from("Free"),
     };
     let first = partition
         .variants
@@ -188,43 +251,25 @@ impl<'a> SlotTable<'a> {
         &self.per_variant[variant]
     }
 
-    fn multi_expression(&self, rt: &TokenStream) -> TokenStream {
+    /// The assertion that at most one body type is read, when more than one type could be.
+    fn body_rule(&self, rt: &TokenStream) -> Option<TokenStream> {
         if self.last_slots.len() < 2 {
-            return quote!(false);
+            return None;
         }
 
         let terms = self.last_slots.iter().map(|slot| {
             let ty = self.types[*slot];
 
-            quote!(::std::primitive::usize::from(#rt::uses_body::<#ty, _>()))
+            quote!((#rt::uses_body::<#ty, _>() as ::std::primitive::usize))
         });
 
-        quote!(0_usize #(+ #terms)* > 1)
+        Some(quote! {
+            ::std::assert!(
+                0_usize #(+ #terms)* <= 1,
+                "variants of one method and path that read the request body must all take the same body type; define one enum for the body and guard on its variants"
+            )
+        })
     }
-}
-
-fn plan(params: usize, guards: &[Analyzed]) -> Vec<Step> {
-    let mut extracted = vec![false; params];
-    let mut steps = Vec::new();
-
-    for (index, guard) in guards.iter().enumerate() {
-        for used in &guard.uses {
-            if !extracted[*used] {
-                extracted[*used] = true;
-                steps.push(Step::Extract(*used));
-            }
-        }
-
-        steps.push(Step::Guard(index));
-    }
-
-    for (index, done) in extracted.iter().enumerate() {
-        if !done {
-            steps.push(Step::Extract(index));
-        }
-    }
-
-    steps
 }
 
 fn variant_block(
@@ -243,19 +288,9 @@ fn variant_block(
         .collect::<syn::Result<Vec<_>>>()?;
     let label =
         (!guards.is_empty()).then(|| Lifetime::new(&format!("'__v{index}"), Span::call_site()));
-    let steps: Vec<_> = plan(handler.params.len(), &guards)
-        .into_iter()
-        .map(|step| match step {
-            Step::Extract(param) => extract_step(ctx, rt, handler, slots, param),
-            Step::Guard(guard) => guard_step(
-                ctx,
-                rt,
-                &handler.params,
-                slots,
-                &guards[guard],
-                label.as_ref(),
-            ),
-        })
+    let steps: Vec<_> = guards
+        .iter()
+        .map(|guard| guard_step(ctx, rt, handler, slots, guard, label.as_ref()))
         .collect();
     let call = call_step(ctx, rt, handler, slots);
 
@@ -265,33 +300,21 @@ fn variant_block(
     })
 }
 
-fn extract_step(
-    ctx: &Context,
-    rt: &TokenStream,
-    handler: &Handler,
-    slots: &[usize],
-    param: usize,
-) -> TokenStream {
-    let _ = ctx;
-    let slot = slot_var(slots[param]);
+/// The expression that extracts parameter `param`, which is only run when its slot is empty.
+fn extraction(rt: &TokenStream, handler: &Handler, param: usize) -> TokenStream {
     let ty = &handler.params[param].ty;
-    let make = if param + 1 == handler.params.len() {
+
+    if param + 1 == handler.params.len() {
         quote!(#rt::extract_last::<#ty, _, _>(__parts, &__params, &mut __source))
     } else {
         quote!(async { #rt::extract_head::<#ty>(__parts, &__params) })
-    };
-
-    quote! {
-        if let ::std::result::Result::Err(error) = #rt::fill(&mut #slot, #make).await {
-            return #rt::fail(error, __parts, __handler).await;
-        }
     }
 }
 
 fn guard_step(
     ctx: &Context,
     rt: &TokenStream,
-    params: &[Param],
+    handler: &Handler,
     slots: &[usize],
     guard: &Analyzed,
     label: Option<&Lifetime>,
@@ -304,14 +327,10 @@ fn guard_step(
     });
     let lets = guard.uses.iter().map(|used| {
         let slot = slot_var(slots[*used]);
-        let pat = binding_pattern(&params[*used].pat);
+        let pat = binding_pattern(&handler.params[*used].pat);
+        let make = extraction(rt, handler, *used);
 
-        quote! {
-            let #pat = match &#slot {
-                ::std::option::Option::Some(value) => value,
-                ::std::option::Option::None => return #rt::unfilled(__parts, __handler).await,
-            };
-        }
+        quote!(let #pat = #rt::fill(&mut #slot, #make).await?;)
     });
 
     quote! {
@@ -339,21 +358,26 @@ fn binding_pattern(pat: &Pat) -> TokenStream {
 
 fn call_step(ctx: &Context, rt: &TokenStream, handler: &Handler, slots: &[usize]) -> TokenStream {
     let args: Vec<_> = (0..handler.params.len()).map(arg_var).collect();
-    let takes: Vec<_> = slots.iter().map(|slot| slot_var(*slot)).collect();
-    let name = &handler.name;
-    let call = if handler.receiver {
-        quote!(__this.#name(#(#args),*))
-    } else {
-        let self_ty = ctx.self_ty;
+    let takes = args.iter().enumerate().map(|(param, arg)| {
+        let slot = slot_var(slots[param]);
+        let make = extraction(rt, handler, param);
 
-        quote!(<#self_ty>::#name(#(#args),*))
+        quote!(let #arg = #rt::take(&mut #slot, #make).await?;)
+    });
+    let name = &handler.name;
+    let call = match (&ctx.owner, handler.receiver) {
+        (_, true) => quote!(__this.#name(#(#args),*)),
+        (Some(owner), false) => {
+            let self_ty = owner.self_ty;
+
+            quote!(<#self_ty>::#name(#(#args),*))
+        }
+        (None, false) => quote!(#name(#(#args),*)),
     };
 
     quote! {
-        let (#(::std::option::Option::Some(#args),)*) = (#(#takes.take(),)*) else {
-            return #rt::unfilled(__parts, __handler).await;
-        };
+        #(#takes)*
 
-        return #rt::finish(#call.await, __parts, __handler).await;
+        return ::std::result::Result::Ok(#rt::finish(#call.await, __parts, __handler).await);
     }
 }

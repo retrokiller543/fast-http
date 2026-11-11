@@ -26,8 +26,30 @@ pub struct RoutePlan<'a> {
     pub partitions: Vec<Partition<'a>>,
 }
 
-/// Groups variants by pattern and then by method, keeping first-appearance and declaration
-/// order, and rejects variants that can never be selected.
+/// How specific a pattern is, segment by segment: a literal beats a `{param}`, which beats `*`,
+/// which beats a trailing `**`. A smaller key is more specific.
+fn specificity(pattern: &str) -> Vec<u8> {
+    pattern
+        .trim_start_matches('/')
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .map(|segment| match segment {
+            "**" => 3,
+            "*" => 2,
+            other if other.starts_with("{**") => 3,
+            other if other.starts_with('{') => 1,
+            _ => 0,
+        })
+        .collect()
+}
+
+/// Groups variants by pattern and then by method, and rejects variants that can never be
+/// selected.
+///
+/// Routes come out most specific first, so `/items/orders` is tried before `/items/{id}` whatever
+/// order they were declared in; the router uses the first route that matches and does not fall
+/// through to a later one. Routes that are equally specific keep their declaration order, and so
+/// do the variants within a route.
 pub fn plan(variants: &[Variant]) -> syn::Result<Vec<RoutePlan<'_>>> {
     let mut plans: Vec<RoutePlan> = Vec::new();
 
@@ -63,8 +85,13 @@ pub fn plan(variants: &[Variant]) -> syn::Result<Vec<RoutePlan<'_>>> {
         }
     }
 
+    plans.sort_by_key(|plan| specificity(&plan.pattern.value()));
+
     Ok(plans)
 }
+
+#[cfg(test)]
+mod tests;
 
 fn check_reachable(partition: &Partition, variant: &Variant) -> syn::Result<()> {
     for earlier in &partition.variants {

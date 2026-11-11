@@ -12,6 +12,10 @@ mod routes_example;
 #[path = "../examples/controller.rs"]
 mod controller_example;
 
+#[cfg(feature = "macros")]
+#[path = "../examples/standalone.rs"]
+mod standalone_example;
+
 async fn send<R: Routes>(
     router: &R,
     method: Method,
@@ -210,4 +214,52 @@ async fn controller_body_guard_without_a_receiver_creates_only_the_allowed_item(
     assert_eq!(created.0, StatusCode::CREATED);
     assert_eq!(created.1, r#"{"id":20,"version":"created"}"#);
     assert_eq!(refused.0, StatusCode::BAD_REQUEST);
+}
+
+#[cfg(feature = "macros")]
+#[tokio::test]
+async fn standalone_lone_functions_are_complete_endpoints() {
+    let router = standalone_example::app().expect("routes");
+
+    let health = send(&router, Method::GET, "/health", &[], "").await;
+    let admin = send(&router, Method::GET, "/admin", &[("x-admin", "1")], "").await;
+    let refused = send(&router, Method::GET, "/admin", &[], "").await;
+
+    assert_eq!(health.1, "ok");
+    assert_eq!(admin.1, "welcome, admin");
+    assert_eq!(refused.0, StatusCode::BAD_REQUEST);
+}
+
+#[cfg(feature = "macros")]
+#[tokio::test]
+async fn standalone_module_variants_and_ordering() {
+    let router = standalone_example::app().expect("routes");
+
+    let all = send(&router, Method::GET, "/items", &[("x-all", "1")], "").await;
+    let first = send(&router, Method::GET, "/items", &[], "").await;
+    let zero = send(&router, Method::GET, "/items/0", &[], "").await;
+    let seven = send(&router, Method::GET, "/items/7", &[], "").await;
+    let express = send(
+        &router,
+        Method::POST,
+        "/items/orders",
+        &[JSON],
+        r#"{"item":7,"express":true}"#,
+    )
+    .await;
+    let standard = send(
+        &router,
+        Method::POST,
+        "/items/orders",
+        &[JSON],
+        r#"{"item":7,"express":false}"#,
+    )
+    .await;
+
+    assert_eq!(all.1, "all items");
+    assert_eq!(first.1, "first page");
+    assert_eq!(zero.1, "no such item");
+    assert_eq!(seven.1, "item 7");
+    assert_eq!(express.1, "express order for item 7");
+    assert_eq!(standard.1, "standard order for item 7");
 }

@@ -2,7 +2,7 @@
 
 ## Role
 
-Controller macros for fast-http. `#[controller]` turns an inherent `impl` block of `async fn` handlers into a `routes` constructor that builds a `fast_http_router::Router` from the methods' route attributes. Use it through the `fast-http` facade (`macros` feature).
+Route macros for fast-http. `#[controller]` turns an inherent `impl` block of `async fn` handlers into a `routes` constructor that builds a `fast_http_router::Router` from the methods' route attributes. `#[routes]` does the same for a module of free functions, and `#[get]`, `#[post]`, `#[put]`, `#[patch]` and `#[delete]` make a lone free function an endpoint. All three share one engine, with the same typed guards. Use them through the `fast-http` facade (`macros` feature).
 
 ## Usage
 
@@ -18,7 +18,7 @@ impl Chat {
     async fn buffered(&self, body: Body<ChatReq>) -> Negotiated<ChatRes> { /* ... */ }
 
     #[get("/{id}", when(headers.get("x-api-version").is_some_and(|v| v == "2")))]
-    async fn show_v2(&self, Path(id): Path<u64>, headers: &HeaderMap) -> String { /* ... */ }
+    async fn show_v2(&self, Path(id): Path<u64>) -> String { /* ... */ }
 
     #[get("/{id}")]
     async fn show(&self, Path(id): Path<u64>) -> String { /* ... */ }
@@ -27,34 +27,59 @@ impl Chat {
 let router = Router::new().merge(Arc::new(chat).routes()?);
 ```
 
-- The optional argument is a path prefix; `crate = path` names the crate providing the facade modules `router` and `core` (default `::fast_http`).
-- `#[get]`, `#[post]`, `#[put]`, `#[patch]` and `#[delete]` mark a method as an endpoint. The path is relative to the prefix and may be omitted, as in `#[post]` or `#[post(when(..))]`, for the prefix itself. Several attributes on one method add several endpoints. Unmarked methods are left alone, other attributes are kept.
-- A `&self` method is bound to the `Arc<Self>` that `routes` takes; a method without a receiver is used as it is. All other arguments are extractors, as for any handler. Methods must be `async fn` and non-generic.
-- The generated `routes(self: Arc<Self>)` returns the router, or the `PatternError` of the first malformed pattern.
+### Three forms, one engine
+
+- **`#[controller("/prefix")] impl T { .. }`** has state: a `&self` method is bound to the `Arc<Self>` that `routes(self: Arc<Self>)` takes, and a method without a receiver is used as it is.
+- **`#[routes("/prefix")] mod name { .. }`** is the same without state. The free `async fn`s inside, with route attributes, become the module's `routes()` function (`name::routes()`). Functions that share a method and path are variants of one route. Types from the parent scope need `use super::*;`.
+- **`#[get("/path", when(..))] async fn name(..)`** on a lone function makes `name` a unit struct that implements `Endpoint`, with `name.route()` building the route at the path. The body stays in a hidden function. A lone function is a complete endpoint: when its guard misses, the request is answered with the guard miss, and it is not handed to another lone function on the same path. To give one path several guarded variants, use a `#[routes]` module.
+
+The optional first argument is a path prefix (controller and module); `crate = path` names the crate providing the facade modules `router` and `core` (default `::fast_http`). `#[get]`, `#[post]`, `#[put]`, `#[patch]` and `#[delete]` mark a function as an endpoint. The path may be omitted, as in `#[post]` or `#[post(when(..))]`, for the prefix itself. Several attributes on one function add several endpoints. Functions must be `async fn` and non-generic. The generated `routes()` returns the router, or the `PatternError` of the first malformed pattern.
+
+Routes are ordered most specific first: a literal segment beats `{param}`, which beats `*` and `**`. So `/items/orders` is tried before `/items/{id}` whatever order they are declared in, which matters because the router uses the first route that matches and does not fall through to a later one. Routes that are equally specific, and the variants within a route, keep their declaration order.
 
 ### Guards
 
-`when(..)` takes boolean Rust expressions over the method's own parameters; several, separated by commas, must all hold. The expression is emitted exactly as written, so the editor highlights, completes and type-checks it like any other code.
+`when(..)` takes boolean Rust expressions over the function's own parameters; several, separated by commas, must all hold. The expression is emitted exactly as written, so the editor highlights, completes and type-checks it like any other code.
 
-- A guard sees the parameters it names by their binding: `params` for `Query(params): Query<Params>`, `headers` for `headers: &HeaderMap`, `order` for `Body { value: order, .. }: Body<Order>`. They are borrowed, so write `*id > 0` for a `Path<u64>`.
+- A guard sees the parameters it names by their binding: `params` for `Query(params): Query<Params>`, `order` for `Body { value: order, .. }: Body<Order>`. They are borrowed, so write `*id > 0` for a `Path<u64>`.
+- `headers` and `query` are reserved names. When a guard uses one and the function has no parameter binding that name, whatever its type, the macro supplies it: `headers` is the request's `&HeaderMap`, `query` a `QueryParams` view. The view is built inside the guard that names it, so it costs nothing when unused, and it is decided per variant. A parameter of the same name always takes precedence. Anything else of the head, such as the method or URI, is a normal parameter: `parts: &Parts`.
 - Any head extractor works as a parameter: `&HeaderMap`, `&Parts`, `&Uri`, `Path<T>`, `QueryParams<'_>` (a zero-copy view with `get`, `contains` and `iter`), `Query<T>` from `fast-http-format` (serde), or your own `FromParts` type. A body extractor works too, since the guard reads the already-parsed value.
-- `headers` and `query` are reserved names. When a guard uses one and the method has no parameter binding that name, the macro supplies it: `headers` is the request's `&HeaderMap`, `query` a `QueryParams` view. The view is built inside the guard that names it, so it costs nothing when unused, and it is decided per variant. A parameter of the same name always takes precedence, so `headers: &HeaderMap` or `Query(query): Query<Params>` still work. Anything else of the head, such as the method or URI, is a normal parameter: `parts: &Parts`.
 - A guard cannot use `self`; take what it needs as a parameter. A parameter that only feeds a guard does not warn as unused.
 - Variants of one method and path are tried in declaration order. A parameter that is absent matches no guard that reads it, so put an unguarded default last. An extractor that fails ends the request with its own error; it does not fall through to the next variant.
-- Compile errors: a variant after an unguarded one for the same method and path (unreachable), a repeated endpoint, a non-`async` or generic method, a receiver other than `&self`, a guard using `self`, and a malformed prefix or path.
+
+### One body type per route
+
+Variants of one method and path that read the request body must all take the same body type, which is parsed lazily, once. This is checked at compile time: taking two different body types is an error. If a body can legitimately take several shapes, define one enum for it, deserialize that, and guard on its variants:
+
+```rust
+#[derive(Deserialize)]
+#[serde(tag = "kind")]
+enum Job { Fast { units: u32 }, Slow { units: u32 } }
+
+#[post("/job", when(matches!(job.value, Job::Fast { .. }))]
+async fn fast(&self, job: Body<Job>) -> .. { }
+
+#[post("/job")]
+async fn slow(&self, job: Body<Job>) -> .. { }
+```
+
+### Compile errors
+
+A variant after an unguarded one for the same method and path (unreachable), a repeated endpoint, a non-`async` or generic function, a receiver other than `&self` (and any receiver in a module or on a lone function), a guard using `self`, two different body types on one route, and a malformed prefix or path.
 
 ## Internal role
 
-A method and path with one unguarded variant uses a hidden free-standing `async fn(Arc<Self>, ..)` wrapper and `fast_http_router::bind`, the same cost as writing the route by hand. A function item is what lets borrowed extractors such as `&Parts` or `Path<&str>` keep working.
+A method and path with one unguarded variant on a controller or module uses `bind` and the router's own endpoints, the same cost as writing the route by hand. A hidden free-standing `async fn(Arc<Self>, ..)` wrapper is what lets borrowed extractors such as `&Parts` or `Path<&str>` keep working there.
 
-Guarded variants compile to one generated `Endpoint` that does its own selection, and keeps work lazy:
+Guarded variants, and every lone function, compile to one generated `Endpoint` that does its own selection and keeps work lazy:
 
-- Arguments are extracted in the order the guards need them, so a guard on the head runs before any body is parsed, and a variant whose guard fails never extracts the rest.
-- Each distinct argument type is extracted once, into a slot on the stack, shared by every variant that takes it, and moved into the winning handler. Nothing allocates and the controller `Arc` is borrowed, not cloned, per request.
-- The request body is handed over untouched unless different variants need different body types. Only then is it buffered once, up to `DEFAULT_BODY_LIMIT`, and replayed to each extractor.
+- A guard fills the arguments it reads, and the winning variant takes the rest, so a guard on the head runs before any body is parsed and a variant whose guard fails never extracts what it did not need.
+- Each distinct argument type is extracted once, into a typed slot on the stack, shared by every variant that takes it, and moved into the winner. Nothing allocates, the request body is never buffered, and the controller `Arc` is borrowed, not cloned, per request.
 - When every variant misses, the response is the usual guard miss (400).
 
-The runtime pieces live in `fast_http_router::dispatch`. Prefix and path are joined at expansion time, so the router receives one literal pattern.
+The generated code is small and its locals use unlikely names (`__parts`, `__s0`, ...), so a guard cannot reach them by accident. Each slot is annotated with the parameter's declared type, which is also what lets an editor infer the types of guard bindings. If the macro cannot expand, for example while a guard is half typed, it emits the item as written plus the error rather than only the error, so the editor keeps its view of the rest of the controller.
+
+The runtime pieces live in `fast_http_router::dispatch`.
 
 ## Feature flags
 

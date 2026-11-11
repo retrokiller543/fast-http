@@ -1,6 +1,7 @@
 use quote::quote;
 
 use super::*;
+use crate::route::HttpMethod;
 
 fn expand(args: TokenStream, item: TokenStream) -> String {
     controller(args, item)
@@ -111,7 +112,7 @@ fn expand_emits_the_guard_exactly_as_written() {
     );
 
     assert!(out.contains("if!(q.stream==Some(true)&&!q.debug){break'__v0;}"));
-    assert!(out.contains("letQuery(q)=match&__s0"));
+    assert!(out.contains("letQuery(q)=__rt::fill(&mut__s0"));
 }
 
 #[test]
@@ -167,12 +168,11 @@ fn expand_variants_taking_the_same_type_share_one_slot() {
         },
     );
 
-    assert_eq!(out.matches("=::std::option::Option::None;").count(), 1);
-    assert!(out.contains("let__multi=false;"));
+    assert_eq!(out.matches("=__rt::slot::<").count(), 1);
 }
 
 #[test]
-fn expand_variants_taking_different_body_types_decide_buffering_at_runtime() {
+fn expand_variants_with_different_last_types_assert_a_single_body_type_at_compile_time() {
     let out = expand(
         quote!(),
         quote! {
@@ -186,24 +186,30 @@ fn expand_variants_taking_different_body_types_decide_buffering_at_runtime() {
         },
     );
 
-    assert_eq!(out.matches("=::std::option::Option::None;").count(), 2);
+    assert_eq!(out.matches("=__rt::slot::<").count(), 2);
+    assert!(out.contains("const_:()=::std::assert!(0_usize+"));
     assert!(out.contains("uses_body::<A,_>()"));
     assert!(out.contains("uses_body::<B,_>()"));
+    assert!(out.contains("mustalltakethesamebodytype"));
 }
 
 #[test]
-fn expand_single_body_type_never_buffers() {
+fn expand_a_single_last_type_needs_no_body_assertion() {
     let out = expand(
         quote!(),
         quote! {
             impl Api {
-                #[post(when(body.fast))]
-                async fn a(&self, body: A) -> String { String::new() }
+                #[post("/ask", when(body.fast))]
+                async fn fast(&self, body: A) -> String { String::new() }
+
+                #[post("/ask")]
+                async fn any(&self, body: A) -> String { String::new() }
             }
         },
     );
 
-    assert!(out.contains("let__multi=false;"));
+    assert!(!out.contains("assert!"));
+    assert!(!out.contains("uses_body"));
 }
 
 #[test]
@@ -218,7 +224,7 @@ fn expand_last_guarded_variant_renders_a_guard_miss() {
         },
     );
 
-    assert!(out.contains("dispatch::guard_miss(__parts,__handler).await"));
+    assert!(out.contains("Err(__rt::guard_miss())"));
 }
 
 #[test]
@@ -529,7 +535,7 @@ fn expand_a_parameter_with_the_reserved_name_takes_precedence() {
     );
 
     assert!(!out.contains("letquery=::fast_http::core::QueryParams::of"));
-    assert!(out.contains("letquery=match&__s0"));
+    assert!(out.contains("letquery=__rt::fill(&mut__s0"));
 }
 
 #[test]
@@ -552,7 +558,7 @@ fn expand_reserved_views_are_decided_per_variant() {
             .count(),
         1
     );
-    assert_eq!(out.matches("letquery=match&__s").count(), 1);
+    assert_eq!(out.matches("letquery=__rt::fill(&mut__s").count(), 1);
 }
 
 #[test]
@@ -584,7 +590,259 @@ fn expand_keeps_the_generated_locals_out_of_the_users_namespace() {
         },
     );
 
-    assert!(out.contains("__body:B"));
-    assert!(out.contains("__handler:&H"));
-    assert!(!out.contains(",body:B"));
+    assert!(out.contains("__body:__B"));
+    assert!(out.contains("__handler:&__H"));
+    assert!(out.contains("call<'__r,__B:"));
+}
+
+#[test]
+fn expand_generic_controller_checks_the_body_rule_after_monomorphization() {
+    let out = expand(
+        quote!(),
+        quote! {
+            impl<T: Send> Api<T> {
+                #[post("/two", when(first.ok))]
+                async fn a(&self, first: A) -> String { String::new() }
+
+                #[post("/two")]
+                async fn b(&self, second: B) -> String { String::new() }
+            }
+        },
+    );
+
+    assert!(!out.contains("const_:()="));
+    assert!(out.contains("const{::std::assert!(0_usize+"));
+}
+
+#[test]
+fn expand_annotates_each_slot_with_the_declared_type() {
+    let out = expand(
+        quote!(),
+        quote! {
+            impl Api {
+                #[post(when(body.fast))]
+                async fn a(&self, body: Body<Req>) -> String { String::new() }
+            }
+        },
+    );
+
+    assert!(out.contains("letmut__s0=__rt::slot::<Body<Req>>();"));
+}
+
+#[test]
+fn recover_keeps_the_impl_without_route_attributes_and_adds_the_error() {
+    let item = quote! {
+        impl Api {
+            #[doc = "kept"]
+            #[get("/a", when(q.))]
+            async fn a(&self, q: QueryParams<'_>) -> String { String::new() }
+        }
+    };
+    let error = controller(quote!(), item.clone())
+        .map(drop)
+        .expect_err("a half-typed guard");
+    let out = recover(item, error).to_string().replace(' ', "");
+
+    assert!(out.contains("asyncfna(&self,q:QueryParams<'_>)->String"));
+    assert!(out.contains("#[doc=\"kept\"]"));
+    assert!(!out.contains("#[get"));
+    assert!(out.contains("compile_error"));
+}
+
+#[test]
+fn recover_unparsable_input_is_passed_through_with_the_error() {
+    let item = quote!(
+        fn not_an_impl() {}
+    );
+    let out = recover(
+        item,
+        syn::Error::new(proc_macro2::Span::call_site(), "boom"),
+    )
+    .to_string();
+
+    assert!(out.contains("compile_error"));
+}
+
+fn expand_routes(args: TokenStream, item: TokenStream) -> String {
+    routes(args, item)
+        .expect("expands")
+        .to_string()
+        .replace(' ', "")
+}
+
+fn expand_standalone(method: HttpMethod, args: TokenStream, item: TokenStream) -> String {
+    standalone(method, args, item)
+        .expect("expands")
+        .to_string()
+        .replace(' ', "")
+}
+
+#[test]
+fn routes_module_gets_a_stateless_routes_function() {
+    let out = expand_routes(
+        quote!("/items"),
+        quote! {
+            mod items {
+                #[get("/{id}", when(*id == 0))]
+                async fn zero(Path(id): Path<u64>) -> String { String::new() }
+
+                #[get("/{id}")]
+                async fn show(Path(id): Path<NonZeroU64>) -> String { String::new() }
+            }
+        },
+    );
+
+    assert!(out.contains("pubfnroutes()->::std::result::Result<"));
+    assert!(out.contains("Route::new(\"/items/{id}\")?"));
+    assert!(out.contains("structFree_") || out.contains("struct__FastHttp_Free_zero_GET"));
+    assert!(out.contains("<NonZeroU64>") && out.contains("zero(__a0)"));
+    assert!(!out.contains("Arc"));
+}
+
+#[test]
+fn routes_module_keeps_the_generated_endpoint_inside_the_module() {
+    let out = expand_routes(
+        quote!(),
+        quote! {
+            mod items {
+                #[get(when(headers.contains_key("x")))]
+                async fn a() -> String { String::new() }
+
+                #[get]
+                async fn b() -> String { String::new() }
+            }
+        },
+    );
+    let module_end = out.rfind('}').expect("module end");
+    let endpoint = position(&out, "Endpointfor__FastHttp_Free_a_GET");
+
+    assert!(endpoint < module_end);
+    assert!(out.contains("__FastHttp_Free_a_GET)"));
+}
+
+#[test]
+fn routes_module_unguarded_function_is_called_directly() {
+    let out = expand_routes(
+        quote!(),
+        quote! {
+            mod items {
+                #[get("/health")]
+                async fn health() -> &'static str { "ok" }
+            }
+        },
+    );
+
+    assert!(out.contains("::fast_http::router::get(health)"));
+}
+
+#[test]
+fn routes_module_must_be_inline() {
+    let message = routes(
+        quote!(),
+        quote!(
+            mod items;
+        ),
+    )
+    .map(drop)
+    .expect_err("error")
+    .to_string();
+
+    assert!(message.contains("inline module"));
+}
+
+#[test]
+fn routes_module_function_with_a_receiver_is_rejected() {
+    let message = routes(
+        quote!(),
+        quote! { mod items { #[get("/a")] async fn a(&self) -> String { String::new() } } },
+    )
+    .map(drop)
+    .expect_err("error")
+    .to_string();
+
+    assert!(message.contains("has no `self`"));
+}
+
+#[test]
+fn standalone_function_becomes_a_unit_struct_with_a_route_helper() {
+    let out = expand_standalone(
+        HttpMethod::Get,
+        quote!("/deep", when(query.contains("full"))),
+        quote! {
+            pub async fn deep(Path(id): Path<u64>) -> String { String::new() }
+        },
+    );
+
+    assert!(out.contains("pubstructdeep;"));
+    assert!(out.contains("asyncfn__fast_http_handler_deep("));
+    assert!(out.contains("::fast_http::core::Endpointfordeep"));
+    assert!(
+        out.contains("implRoute::new(\"/deep\")")
+            || out.contains("Route::new(\"/deep\")?.endpoint(deep)")
+    );
+    assert!(out.contains("pubfnroute(&self,)"));
+    assert!(out.contains("__fast_http_handler_deep(__a0)"));
+}
+
+#[test]
+fn standalone_function_keeps_a_private_struct_private() {
+    let out = expand_standalone(
+        HttpMethod::Get,
+        quote!("/a"),
+        quote! { async fn a() -> String { String::new() } },
+    );
+
+    assert!(out.contains("structa;"));
+    assert!(!out.contains("pubstructa"));
+}
+
+#[test]
+fn standalone_without_a_path_is_the_root() {
+    let out = expand_standalone(
+        HttpMethod::Post,
+        quote!(when(query.contains("x"))),
+        quote! { async fn a() -> String { String::new() } },
+    );
+
+    assert!(out.contains("Route::new(\"/\")?"));
+    assert!(out.contains("::fast_http::core::http::Method::POST"));
+}
+
+#[test]
+fn standalone_rejects_a_receiver_and_a_sync_function() {
+    let receiver = standalone(
+        HttpMethod::Get,
+        quote!("/a"),
+        quote! { async fn a(&self) -> String { String::new() } },
+    )
+    .map(drop)
+    .expect_err("error")
+    .to_string();
+    let sync = standalone(
+        HttpMethod::Get,
+        quote!("/a"),
+        quote! { fn a() -> String { String::new() } },
+    )
+    .map(drop)
+    .expect_err("error")
+    .to_string();
+
+    assert!(receiver.contains("has no `self`"));
+    assert!(sync.contains("must be `async fn`"));
+}
+
+#[test]
+fn recover_keeps_a_module_without_route_attributes() {
+    let item = quote! {
+        mod items {
+            #[get("/a", when(q.))]
+            async fn a() -> String { String::new() }
+        }
+    };
+    let error = routes(quote!(), item.clone()).map(drop).expect_err("error");
+    let out = recover(item, error).to_string().replace(' ', "");
+
+    assert!(out.contains("asyncfna()->String"));
+    assert!(!out.contains("#[get"));
+    assert!(out.contains("compile_error"));
 }

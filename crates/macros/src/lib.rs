@@ -50,7 +50,75 @@ use proc_macro::TokenStream;
 /// malformed route pattern.
 #[proc_macro_attribute]
 pub fn controller(args: TokenStream, item: TokenStream) -> TokenStream {
-    expand::controller(args.into(), item.into())
-        .unwrap_or_else(syn::Error::into_compile_error)
-        .into()
+    let original: proc_macro2::TokenStream = item.clone().into();
+
+    match expand::controller(args.into(), item.into()) {
+        Ok(expanded) => expanded.into(),
+        Err(error) => expand::recover(original, error).into(),
+    }
 }
+
+/// Builds routes from the free `async fn`s of an inline module.
+///
+/// ```ignore
+/// #[routes("/items")]
+/// mod items {
+///     use super::*;
+///
+///     #[get("/{id}", when(*id == 0))]
+///     async fn show_zero(Path(id): Path<u64>) -> &'static str { "zero" }
+///
+///     #[get("/{id}")]
+///     async fn show(Path(id): Path<NonZeroU64>) -> String { /* ... */ }
+/// }
+///
+/// let router = Router::new().merge(items::routes()?);
+/// ```
+///
+/// This is [`controller`] without state: the same attributes, guards and lazy, extract-once
+/// dispatch, over functions that have no `self`. The module gets a `routes()` function. Functions
+/// that share a method and path are variants of one route, in declaration order.
+#[proc_macro_attribute]
+pub fn routes(args: TokenStream, item: TokenStream) -> TokenStream {
+    let original: proc_macro2::TokenStream = item.clone().into();
+
+    match expand::routes(args.into(), item.into()) {
+        Ok(expanded) => expanded.into(),
+        Err(error) => expand::recover(original, error).into(),
+    }
+}
+
+macro_rules! standalone_routes {
+    ($($name:ident => $method:ident),+ $(,)?) => {
+        $(
+            #[doc = concat!("Makes a free `async fn` the endpoint for a `", stringify!($name), "` route.")]
+            ///
+            /// The function's name becomes a unit struct that implements `Endpoint`, and
+            /// `name.route()` builds the route at the attribute's path. `when(..)` takes the
+            /// same guards as in [`controller`]. To give one path several guarded variants,
+            /// put the functions in a [`routes`] module.
+            ///
+            /// ```ignore
+            /// #[get("/health", when(query.contains("deep")))]
+            /// async fn deep_health() -> &'static str { "deep" }
+            ///
+            /// let router = Router::new().route(deep_health.route()?);
+            /// ```
+            #[proc_macro_attribute]
+            pub fn $name(args: TokenStream, item: TokenStream) -> TokenStream {
+                let original: proc_macro2::TokenStream = item.clone().into();
+
+                match expand::standalone(route::HttpMethod::$method, args.into(), item.into()) {
+                    Ok(expanded) => expanded.into(),
+                    Err(error) => {
+                        let error = error.into_compile_error();
+
+                        quote::quote!(#original #error).into()
+                    }
+                }
+            }
+        )+
+    };
+}
+
+standalone_routes!(get => Get, post => Post, put => Put, patch => Patch, delete => Delete);

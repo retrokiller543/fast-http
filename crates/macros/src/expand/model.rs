@@ -12,9 +12,9 @@ pub struct Param {
     pub bindings: Vec<Ident>,
 }
 
-/// A controller method that carries route attributes.
+/// A function that carries route attributes: a controller method or a free function.
 pub struct Handler {
-    /// The method's name.
+    /// The name it is called by.
     pub name: Ident,
     /// Whether it takes `&self`.
     pub receiver: bool,
@@ -38,12 +38,18 @@ pub struct Variant {
     pub when_text: String,
 }
 
-/// What the generators need to know about the impl block.
-pub struct Context<'a> {
-    /// Crate that provides the `router` and `core` modules.
-    pub krate: &'a syn::Path,
+/// The impl block a controller's methods belong to.
+pub struct Owner<'a> {
     /// The controller type.
     pub self_ty: &'a Type,
     /// The impl block's generics.
     pub generics: &'a syn::Generics,
+}
+
+/// What the generators need to know about where the handlers live.
+pub struct Context<'a> {
+    /// Crate that provides the `router` and `core` modules.
+    pub krate: &'a syn::Path,
+    /// The impl block, or `None` for free functions, which have no receiver and no state.
+    pub owner: Option<Owner<'a>>,
 }
