@@ -45,9 +45,9 @@ impl IntoResponse for StatusCode {
     }
 }
 
-impl IntoResponse for &'static str {
+impl IntoResponse for &str {
     fn into_response(self) -> Response {
-        ResponseBody::from(self).into_response()
+        ResponseBody::from(Bytes::copy_from_slice(self.as_bytes())).into_response()
     }
 }
 

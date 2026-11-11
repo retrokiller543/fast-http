@@ -409,7 +409,25 @@ fn error_generic_method_is_rejected() {
         quote! { impl Api { #[get("/a")] async fn a<T>(&self) -> String { String::new() } } },
     );
 
-    assert!(message.contains("cannot be generic"));
+    assert!(message.contains("cannot have type or const parameters"));
+}
+
+#[test]
+fn expand_named_lifetimes_are_elided_in_generated_argument_types() {
+    let out = expand(
+        quote!(),
+        quote! {
+            impl Api {
+                #[get("/{n}", when(n.0.len() > 1))]
+                async fn a<'a>(&self, n: Path<&'a str>) -> &'a str { n.0 }
+
+                #[get("/{n}")]
+                async fn b<'a>(&self, n: Path<&'a str>) -> &'a str { n.0 }
+            }
+        },
+    );
+
+    assert!(out.contains("slot::<Path<&'_str>>"));
 }
 
 #[test]

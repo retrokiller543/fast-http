@@ -2,7 +2,7 @@
 
 use bytes::Bytes;
 use fast_http::{
-    core::Routes,
+    core::{Path, Routes},
     get, post, route,
     router::{Route, Router},
     routes,
@@ -38,6 +38,29 @@ async fn general() -> &'static str {
 #[route(post, "/general-post")]
 async fn general_post() -> &'static str {
     "posted"
+}
+
+#[get("/echo/{name}")]
+#[allow(clippy::needless_lifetimes)]
+async fn echo<'a>(Path(name): Path<&'a str>) -> &'a str {
+    name
+}
+
+#[routes("/borrowed")]
+mod borrowed {
+    use fast_http::core::Path;
+
+    #[get("/{name}", when(name.len() > 3))]
+    #[allow(clippy::needless_lifetimes)]
+    async fn long<'a>(Path(name): Path<&'a str>) -> &'a str {
+        name
+    }
+
+    #[get("/{name}")]
+    #[allow(clippy::needless_lifetimes)]
+    async fn short<'a>(Path(name): Path<&'a str>) -> String {
+        format!("short:{name}")
+    }
 }
 
 #[routes("/items")]
@@ -273,5 +296,31 @@ async fn route_general_form_mixes_with_the_shorthands_in_a_module() {
     assert_eq!(
         send(&router, Method::GET, "/items/mixed", &[], "").await.1,
         "mixed"
+    );
+}
+
+#[tokio::test]
+async fn lone_function_may_return_data_borrowed_from_its_arguments() {
+    let router = Router::new().route(echo.route().expect("valid route"));
+
+    assert_eq!(
+        send(&router, Method::GET, "/echo/ada", &[], "").await.1,
+        "ada"
+    );
+}
+
+#[tokio::test]
+async fn module_variants_may_return_borrowed_data_and_name_lifetimes() {
+    let router = borrowed::routes().expect("valid routes");
+
+    assert_eq!(
+        send(&router, Method::GET, "/borrowed/grace", &[], "")
+            .await
+            .1,
+        "grace"
+    );
+    assert_eq!(
+        send(&router, Method::GET, "/borrowed/ada", &[], "").await.1,
+        "short:ada"
     );
 }

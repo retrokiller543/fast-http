@@ -7,6 +7,7 @@
 //! curl -H 'x-admin: 1' http://127.0.0.1:3000/admin
 //! curl http://127.0.0.1:3000/greet
 //! curl 'http://127.0.0.1:3000/greet?name=ada'
+//! curl http://127.0.0.1:3000/echo/ada
 //! curl http://127.0.0.1:3000/items
 //! curl -H 'x-all: 1' http://127.0.0.1:3000/items
 //! curl http://127.0.0.1:3000/items/0
@@ -23,13 +24,16 @@
 //! like the methods of a `#[controller]`. Routes are ordered most specific first, so
 //! `/items/orders` wins over `/items/{id}` whatever order they are declared in.
 //!
+//! A handler may return data borrowed from its arguments, as `echo` does: the request outlives
+//! the handler call, so `-> &str` is valid and is copied into the response.
+//!
 //! The one rule for bodies: variants of one method and path that read the body must all take the
 //! same body type. If a body can take several shapes, make it one enum and guard on its variants.
 
 use std::net::SocketAddr;
 
 use fast_http::{
-    core::QueryParams,
+    core::{EndpointSet, Path, QueryParams},
     get,
     router::{PatternError, Route, RouteList, Router},
     routes,
@@ -55,6 +59,15 @@ async fn greet_named(query: QueryParams<'_>) -> String {
 #[get("/greet")]
 async fn greet() -> &'static str {
     "hello, world"
+}
+
+#[get("/echo/{name}")]
+async fn echo(Path(name): Path<&str>) -> &str {
+    name
+}
+
+fn standalone_routes() -> Result<Route<impl EndpointSet>, PatternError> {
+    Ok(Route::new("/greet")?.endpoint(greet_named).endpoint(greet))
 }
 
 #[routes("/items")]
@@ -114,7 +127,8 @@ pub fn app() -> Result<Router<impl RouteList>, PatternError> {
     Ok(Router::new()
         .route(health.route()?)
         .route(admin.route()?)
-        .route(Route::new("/greet")?.endpoint(greet_named).endpoint(greet))
+        .route(standalone_routes()?)
+        .route(echo.route()?)
         .merge(items::routes()?))
 }
 

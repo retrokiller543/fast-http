@@ -3,7 +3,8 @@ use std::collections::BTreeSet;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
-    Attribute, Error, FnArg, ImplItem, Item, ItemFn, ItemImpl, ItemMod, Signature, Visibility,
+    Attribute, Error, FnArg, Ident, ImplItem, Item, ItemFn, ItemImpl, ItemMod, Lifetime, Signature,
+    Visibility, visit_mut::VisitMut,
 };
 
 use crate::{
@@ -403,13 +404,37 @@ fn allow_guard_only_params(
     Ok(())
 }
 
+/// Rewrites the lifetimes a function declares to `'_`, so a generated endpoint can name the
+/// argument types without declaring them: each extraction borrows from the request anyway.
+struct Elide<'a>(&'a [Ident]);
+
+impl VisitMut for Elide<'_> {
+    fn visit_lifetime_mut(&mut self, lifetime: &mut Lifetime) {
+        if self.0.contains(&lifetime.ident) {
+            *lifetime = Lifetime::new("'_", lifetime.span());
+        }
+    }
+}
+
 fn params(sig: &Signature) -> Vec<Param> {
+    let declared: Vec<Ident> = sig
+        .generics
+        .lifetimes()
+        .map(|param| param.lifetime.ident.clone())
+        .collect();
+
     sig.inputs
         .iter()
         .filter_map(|arg| match arg {
             FnArg::Typed(typed) => Some(Param {
                 pat: (*typed.pat).clone(),
-                ty: (*typed.ty).clone(),
+                ty: {
+                    let mut ty = (*typed.ty).clone();
+
+                    Elide(&declared).visit_type_mut(&mut ty);
+
+                    ty
+                },
                 bindings: bindings(&typed.pat),
             }),
             FnArg::Receiver(_) => None,
@@ -425,10 +450,10 @@ fn check_signature(sig: &Signature, allow_receiver: bool) -> syn::Result<()> {
         ));
     }
 
-    if !sig.generics.params.is_empty() {
+    if sig.generics.type_params().next().is_some() || sig.generics.const_params().next().is_some() {
         return Err(Error::new_spanned(
             &sig.generics,
-            "route functions cannot be generic",
+            "route functions cannot have type or const parameters; lifetimes are fine",
         ));
     }
 

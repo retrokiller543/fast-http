@@ -56,15 +56,15 @@ where
 
 macro_rules! bound_impl {
     ([$($t:ident $v:ident),*] $l:ident $lv:ident) => {
-        impl<S, F, Fut, R, M, $($t,)* $l> Handler<(Bind, M, $($t,)* $l)> for Bound<S, F>
+        impl<S, F, Fut, M, $($t,)* $l> Handler<(Bind, M, $($t,)* $l)> for Bound<S, F>
         where
             S: Clone + Send + Sync + 'static,
             F: Fn(S, $($t,)* $l) -> Fut + Send + Sync + 'static,
-            Fut: Future<Output = R>,
-            R: IntoOutcome,
             $($t: FromParams,)*
             $l: Extract<M>,
-            for<'r> F: Call<'r, (S, $($t::At<'r>,)* <$l as Extract<M>>::At<'r>,), Output = R>,
+            for<'r> F: Call<'r, (S, $($t::At<'r>,)* <$l as Extract<M>>::At<'r>,)>,
+            for<'r> <F as Call<'r, (S, $($t::At<'r>,)* <$l as Extract<M>>::At<'r>,)>>::Output:
+                IntoOutcome,
         {
             async fn call<'r, B: ReqBody, H: ErrorHandler>(
                 &self,

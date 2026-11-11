@@ -244,6 +244,16 @@ async fn standalone_endpoints_on_one_route_fall_through() {
 
 #[cfg(feature = "macros")]
 #[tokio::test]
+async fn standalone_function_returns_data_borrowed_from_its_path() {
+    let router = standalone_example::app().expect("routes");
+
+    let echoed = send(&router, Method::GET, "/echo/ada", &[], "").await;
+
+    assert_eq!(echoed.1, "ada");
+}
+
+#[cfg(feature = "macros")]
+#[tokio::test]
 async fn standalone_module_variants_and_ordering() {
     let router = standalone_example::app().expect("routes");
 

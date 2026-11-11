@@ -175,14 +175,13 @@ where
 
 macro_rules! handler_impl {
     ([$($t:ident $v:ident),*] $l:ident $lv:ident) => {
-        impl<F, Fut, R, M, $($t,)* $l> Handler<(M, $($t,)* $l)> for F
+        impl<F, Fut, M, $($t,)* $l> Handler<(M, $($t,)* $l)> for F
         where
             F: Fn($($t,)* $l) -> Fut + Send + Sync + 'static,
-            Fut: Future<Output = R>,
-            R: IntoOutcome,
             $($t: FromParams,)*
             $l: Extract<M>,
-            for<'r> F: Call<'r, ($($t::At<'r>,)* <$l as Extract<M>>::At<'r>,), Output = R>,
+            for<'r> F: Call<'r, ($($t::At<'r>,)* <$l as Extract<M>>::At<'r>,)>,
+            for<'r> <F as Call<'r, ($($t::At<'r>,)* <$l as Extract<M>>::At<'r>,)>>::Output: IntoOutcome,
         {
             async fn call<'r, B: ReqBody, H: ErrorHandler>(
                 &self,
