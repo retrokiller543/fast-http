@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use fast_http_core::{FromParts, Response, ResponseBody, TaskSpawner};
+use fast_http_core::{FromParts, IntoResponse, Response, ResponseBody, TaskSpawner};
 use http::{
     HeaderValue, Method, StatusCode,
     header::{
@@ -67,6 +67,9 @@ impl WebSocketUpgrade {
     }
 
     /// Size at which queued outgoing data is written to the socket.
+    ///
+    /// Must stay below [`max_write_buffer_size`](Self::max_write_buffer_size); otherwise
+    /// [`on_upgrade`](Self::on_upgrade) refuses with [`WebSocketUpgradeRejection::InvalidConfig`].
     pub fn write_buffer_size(mut self, size: usize) -> Self {
         self.config = self.config.write_buffer_size(size);
 
@@ -74,6 +77,10 @@ impl WebSocketUpgrade {
     }
 
     /// Upper bound of the outgoing queue; sends fail beyond it instead of buffering.
+    ///
+    /// Must exceed [`write_buffer_size`](Self::write_buffer_size), 128 KiB unless changed;
+    /// otherwise [`on_upgrade`](Self::on_upgrade) refuses with
+    /// [`WebSocketUpgradeRejection::InvalidConfig`].
     pub fn max_write_buffer_size(mut self, size: usize) -> Self {
         self.config = self.config.max_write_buffer_size(size);
 
@@ -107,11 +114,25 @@ impl WebSocketUpgrade {
     /// The task is spawned through the server's `TaskWrap`, from the handler, so it runs in the
     /// same context as the request. Outside a server, which provides no spawner, it is spawned
     /// directly on tokio.
+    ///
+    /// Settings the socket cannot run with, a maximum write buffer that is not larger than the
+    /// write buffer, are refused here with a `500` and nothing is upgraded.
     pub fn on_upgrade<F, Fut>(self, callback: F) -> Response
     where
         F: FnOnce(WebSocket) -> Fut + Send + 'static,
         Fut: Future<Output = ()> + Send + 'static,
     {
+        if self.config.max_write_buffer_size <= self.config.write_buffer_size {
+            tracing::error!(
+                target: TRACE_TARGET,
+                write_buffer_size = self.config.write_buffer_size,
+                max_write_buffer_size = self.config.max_write_buffer_size,
+                "websocket max_write_buffer_size must exceed write_buffer_size; refusing the upgrade"
+            );
+
+            return WebSocketUpgradeRejection::InvalidConfig.into_response();
+        }
+
         let Self {
             config,
             accept,
@@ -164,6 +185,16 @@ impl WebSocketUpgrade {
     }
 }
 
+/// Whether `key` has the shape RFC 6455 requires of `Sec-WebSocket-Key`: base64 of 16 bytes,
+/// which is 22 base64 characters followed by `==`.
+fn is_valid_key(key: &[u8]) -> bool {
+    key.len() == 24
+        && key.ends_with(b"==")
+        && key[..22]
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/'))
+}
+
 fn requested_protocols(parts: &Parts) -> Vec<String> {
     parts
         .headers
@@ -200,6 +231,11 @@ impl FromParts for WebSocketUpgrade {
             .headers
             .get(SEC_WEBSOCKET_KEY)
             .ok_or(WebSocketUpgradeRejection::MissingKey)?;
+
+        if !is_valid_key(key.as_bytes()) {
+            return Err(WebSocketUpgradeRejection::InvalidKey);
+        }
+
         let accept = HeaderValue::from_str(&derive_accept_key(key.as_bytes()))
             .map_err(|_| WebSocketUpgradeRejection::InvalidKey)?;
         let on_upgrade = parts

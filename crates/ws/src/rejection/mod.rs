@@ -29,6 +29,11 @@ pub enum WebSocketUpgradeRejection {
     #[error("invalid `Sec-WebSocket-Key` header")]
     InvalidKey,
 
+    /// The handler configured a maximum write buffer that is not larger than the write buffer,
+    /// which the socket cannot run with; nothing was upgraded.
+    #[error("the websocket write buffer limits are inconsistent")]
+    InvalidConfig,
+
     /// The connection carries no upgrade handle, such as an HTTP/2 stream.
     #[error("the connection cannot be upgraded")]
     NotUpgradable,
@@ -47,7 +52,10 @@ impl IntoResponse for WebSocketUpgradeRejection {
                     .insert(header::ALLOW, HeaderValue::from_static("GET"));
             }
             Self::UnsupportedVersion => {
-                response.headers_mut().insert(
+                let headers = response.headers_mut();
+
+                headers.insert(header::UPGRADE, HeaderValue::from_static("websocket"));
+                headers.insert(
                     header::SEC_WEBSOCKET_VERSION,
                     HeaderValue::from_static("13"),
                 );
@@ -64,7 +72,7 @@ impl ErrorResponse for WebSocketUpgradeRejection {
         match self {
             Self::MethodNotGet => StatusCode::METHOD_NOT_ALLOWED,
             Self::UnsupportedVersion => StatusCode::UPGRADE_REQUIRED,
-            Self::NotUpgradable => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::NotUpgradable | Self::InvalidConfig => StatusCode::INTERNAL_SERVER_ERROR,
             _ => StatusCode::BAD_REQUEST,
         }
     }

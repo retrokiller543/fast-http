@@ -17,7 +17,7 @@ http.workspace = true
 hyper = { workspace = true, features = ["http1", "server"] }
 hyper-util = { workspace = true, features = ["tokio"] }
 thiserror.workspace = true
-tokio = { workspace = true, features = ["io-util", "rt"] }
+tokio = { workspace = true, features = ["io-util", "rt", "time"] }
 tokio-tungstenite.workspace = true
 tracing.workspace = true
 

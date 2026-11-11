@@ -50,14 +50,26 @@ impl Admission {
     }
 
     /// Reserves a slot for one connection, held until the returned [`Permit`] is dropped.
+    ///
+    /// The shutdown check and the count happen under the same lock that [`shutdown`](Self::shutdown)
+    /// takes, so an admission either completes before shutdown, and [`drained`](Self::drained)
+    /// waits for it, or sees the shutdown and is refused.
     pub fn try_admit(&self) -> Result<Permit, AdmissionRejection> {
-        if self.is_shutting_down() {
-            return Err(AdmissionRejection::ShuttingDown);
-        }
-
         let limit = self.0.limit;
-        let admitted = self.0.active.send_if_modified(|active| {
+        let mut outcome = Ok(());
+
+        self.0.active.send_if_modified(|active| {
+            if *self.0.closing.borrow() {
+                outcome = Err(AdmissionRejection::ShuttingDown);
+
+                return false;
+            }
+
             if limit.is_some_and(|limit| *active >= limit) {
+                outcome = Err(AdmissionRejection::AtCapacity {
+                    limit: limit.unwrap_or_default(),
+                });
+
                 return false;
             }
 
@@ -66,20 +78,18 @@ impl Admission {
             true
         });
 
-        if !admitted {
-            return Err(AdmissionRejection::AtCapacity {
-                limit: limit.unwrap_or_default(),
-            });
-        }
-
-        Ok(Permit {
+        outcome.map(|()| Permit {
             admission: self.clone(),
         })
     }
 
     /// Stops admitting and signals every live connection through its [`ShutdownSignal`].
     pub fn shutdown(&self) {
-        self.0.closing.send_replace(true);
+        self.0.active.send_if_modified(|_| {
+            self.0.closing.send_replace(true);
+
+            false
+        });
     }
 
     /// Whether [`shutdown`](Self::shutdown) was called.
