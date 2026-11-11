@@ -18,9 +18,15 @@ fn parts(uri: &str) -> Parts {
         .0
 }
 
+fn extract<'r, T: serde::Deserialize<'r> + Send>(
+    parts: &'r Parts,
+) -> Result<Query<T>, FormatError> {
+    Query::from_params_at(parts, &PathParams::EMPTY)
+}
+
 #[test]
 fn from_parts_reads_typed_fields() {
-    let Query(params) = Query::<Params>::from_parts(&parts("/c?stream=true&page=2")).expect("ok");
+    let Query(params) = extract::<Params>(&parts("/c?stream=true&page=2")).expect("ok");
 
     assert_eq!(
         params,
@@ -33,7 +39,7 @@ fn from_parts_reads_typed_fields() {
 
 #[test]
 fn from_parts_missing_optional_fields_are_none() {
-    let Query(params) = Query::<Params>::from_parts(&parts("/c")).expect("ok");
+    let Query(params) = extract::<Params>(&parts("/c")).expect("ok");
 
     assert_eq!(
         params,
@@ -46,7 +52,7 @@ fn from_parts_missing_optional_fields_are_none() {
 
 #[test]
 fn from_parts_wrong_type_is_a_bad_request() {
-    let error = Query::<Params>::from_parts(&parts("/c?page=many"))
+    let error = extract::<Params>(&parts("/c?page=many"))
         .map(drop)
         .expect_err("rejected");
 
@@ -63,15 +69,12 @@ struct Borrowing<'a> {
 }
 
 #[test]
-fn raw_query_borrows_until_decoding_is_needed() {
+fn query_borrows_until_decoding_is_needed() {
     let plain = parts("/c?name=ada");
     let encoded = parts("/c?name=a%20b");
-    let params = PathParams::EMPTY;
 
-    let plain = RawQuery::from_params(&plain, &params).expect("infallible");
-    let encoded = RawQuery::from_params(&encoded, &params).expect("infallible");
-    let plain: Borrowing = plain.deserialize().expect("decodes");
-    let encoded: Borrowing = encoded.deserialize().expect("decodes");
+    let Query(plain) = extract::<Borrowing>(&plain).expect("decodes");
+    let Query(encoded) = extract::<Borrowing>(&encoded).expect("decodes");
 
     assert!(matches!(plain.name, std::borrow::Cow::Borrowed("ada")));
     assert!(matches!(encoded.name, std::borrow::Cow::Owned(_)));
@@ -79,17 +82,7 @@ fn raw_query_borrows_until_decoding_is_needed() {
 }
 
 #[test]
-fn raw_query_also_reads_types_that_own_their_fields() {
-    let request = parts("/c?stream=true&page=2");
-    let raw = RawQuery::from_params(&request, &PathParams::EMPTY).expect("infallible");
-
-    let params: Params = raw.deserialize().expect("decodes");
-
-    assert_eq!(params.page, Some(2));
-}
-
-#[test]
-fn raw_query_rejects_a_plain_str_field_that_needs_decoding() {
+fn query_rejects_a_plain_str_field_that_needs_decoding() {
     #[derive(Debug, Deserialize)]
     struct Strict<'a> {
         #[allow(dead_code)]
@@ -97,11 +90,8 @@ fn raw_query_rejects_a_plain_str_field_that_needs_decoding() {
     }
 
     let request = parts("/c?name=a%20b");
-    let raw = RawQuery::from_params(&request, &PathParams::EMPTY).expect("infallible");
 
-    let error = raw
-        .deserialize::<Strict>()
-        .expect_err("cannot borrow decoded text");
+    let error = extract::<Strict>(&request).expect_err("cannot borrow decoded text");
 
     assert!(error.to_string().contains("Cow"));
 }

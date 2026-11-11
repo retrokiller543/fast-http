@@ -8,8 +8,8 @@ use crate::dispatch::BodySource;
 
 use bytes::Bytes;
 use fast_http_core::{
-    Endpoint, ErrorHandler, FromParams, FromRequest, GuardPhase, HandlerError, IntoOutcome,
-    PathParams, ReqBody, Response,
+    Endpoint, ErrorHandler, FromParams, FromParamsAt, FromRequest, GuardPhase, HandlerError,
+    IntoOutcome, PathParams, ReqBody, Response,
 };
 use http::{Method, request::Parts};
 
@@ -88,6 +88,51 @@ impl<T: FromRequest + Send> Extract<ViaBody> for T {
     }
 
     async fn extract_from<'r, B: ReqBody>(
+        parts: &'r Parts,
+        _: &PathParams<'r>,
+        source: &mut BodySource<B>,
+    ) -> Result<Self, HandlerError> {
+        let body = source.take()?;
+
+        T::from_request(parts, body)
+            .await
+            .map_err(HandlerError::from)
+    }
+}
+
+/// Builds one argument of a generated endpoint, as the type the handler wrote.
+///
+/// Unlike [`Extract`], `Self` is the value itself, so a struct that borrows from the request, such
+/// as `Query<Params<'_>>`, works without declaring how its lifetime maps to the request's. Plain
+/// functions registered through [`Handler`] cannot use this and keep to [`Extract`].
+pub trait ExtractAt<'r, M>: Sized + Send {
+    /// Whether extraction consumes the request body.
+    const USES_BODY: bool;
+
+    /// Extracts the argument, taking the body from `source` only if it needs one.
+    fn extract_at<B: ReqBody>(
+        parts: &'r Parts,
+        params: &PathParams<'r>,
+        source: &mut BodySource<B>,
+    ) -> impl Future<Output = Result<Self, HandlerError>> + Send;
+}
+
+impl<'r, T: FromParamsAt<'r>> ExtractAt<'r, ViaParams> for T {
+    const USES_BODY: bool = false;
+
+    async fn extract_at<B: ReqBody>(
+        parts: &'r Parts,
+        params: &PathParams<'r>,
+        _: &mut BodySource<B>,
+    ) -> Result<Self, HandlerError> {
+        T::from_params_at(parts, params).map_err(HandlerError::from)
+    }
+}
+
+impl<'r, T: FromRequest + Send> ExtractAt<'r, ViaBody> for T {
+    const USES_BODY: bool = true;
+
+    async fn extract_at<B: ReqBody>(
         parts: &'r Parts,
         _: &PathParams<'r>,
         source: &mut BodySource<B>,

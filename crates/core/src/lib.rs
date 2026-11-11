@@ -24,8 +24,8 @@ pub use error::{
     DefaultErrorHandler, ErrorHandler, ErrorResponse, HandlerError, IntoOutcome, Outcome,
 };
 pub use extract::{
-    Extension, FromParams, FromParts, FromPathParam, FromRequest, Path, PathArgs, PathParams,
-    PeerAddr, QueryParams, Segments, WithPeer, with_peer,
+    Extension, FromParams, FromParamsAt, FromParts, FromPathParam, FromRequest, Path, PathArgs,
+    PathParams, PeerAddr, QueryParams, Segments, WithPeer, with_peer,
 };
 pub use flow::{Flow, Identity, Next, Stack, reject};
 pub use guard::{BodyGuard, GuardPhase, HeadGuard};

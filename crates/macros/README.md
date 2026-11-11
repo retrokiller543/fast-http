@@ -76,9 +76,11 @@ A variant after an unguarded one for the same method and path (unreachable), a r
 
 A handler may return data borrowed from its arguments, `async fn echo(Path(name): Path<&str>) -> &str`, with named lifetimes too (`fn echo<'a>(..) -> &'a str`). Arguments live as long as the request does, and a borrowed `&str` is copied into the response body. Type and const parameters are still rejected.
 
+`Query<T>` is one extractor for both cases: `Query<Params>` owns what it reads, and `Query<Params<'_>>` with `#[serde(borrow)] Cow<'a, str>` fields points into the request and copies a value only when percent-decoding changes it. A plain `&'a str` field cannot hold decoded text, so a request that needs decoding fails with an error that says to use `Cow`.
+
 ## Internal role
 
-A method and path with one unguarded variant on a controller or module uses `bind` and the router's own endpoints, the same cost as writing the route by hand. A hidden free-standing `async fn(Arc<Self>, ..)` wrapper is what lets borrowed extractors such as `&Parts` or `Path<&str>` keep working there.
+Every method and path compiles to one generated `Endpoint`, guarded or not, so every argument is asked for as the type the handler wrote, with the request lifetime inferred at that spot. That is what lets `Query<Params<'_>>` borrow from the request, which the router's plain `Handler` path cannot express. An endpoint without guards declines nothing and does the same work as a hand-written one.
 
 Guarded variants, and every lone function, compile to one generated `Endpoint` that does its own selection and keeps work lazy:
 

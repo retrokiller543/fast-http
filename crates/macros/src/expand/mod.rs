@@ -17,7 +17,6 @@ use crate::{
 mod dispatcher;
 mod model;
 mod partition;
-mod simple;
 
 pub use model::{Handler, Param};
 
@@ -159,7 +158,6 @@ pub fn standalone(
         name: inner,
         receiver: false,
         params,
-        output: function.sig.output.clone(),
     }];
     let variants = vec![Variant {
         handler: 0,
@@ -181,6 +179,7 @@ pub fn standalone(
         Naming {
             name: Some(name.clone()),
             vis: quote!(#vis),
+            index: 0,
         },
     )?;
     let items = generated.items;
@@ -260,29 +259,21 @@ fn generate(ctx: &Context, handlers: &[Handler], plans: &[RoutePlan]) -> syn::Re
         extra: Vec::new(),
         routes: Vec::new(),
     };
-    let mut wrapped = BTreeSet::new();
 
     for route in plans {
         let pattern = &route.pattern;
         let mut endpoints = Vec::new();
 
         for partition in &route.partitions {
-            if partition.is_simple() {
-                let index = partition.variants[0].handler;
-                let handler = &handlers[index];
+            let dispatcher = dispatcher::dispatcher(
+                ctx,
+                handlers,
+                partition,
+                Naming::derived(generated.extra.len()),
+            )?;
 
-                if handler.receiver && wrapped.insert(index) {
-                    generated.members.push(simple::wrapper_fn(handler));
-                }
-
-                endpoints.push(simple::endpoint(ctx, handler, partition.method));
-            } else {
-                let dispatcher =
-                    dispatcher::dispatcher(ctx, handlers, partition, Naming::derived())?;
-
-                generated.extra.push(dispatcher.items);
-                endpoints.push(dispatcher.expr);
-            }
+            generated.extra.push(dispatcher.items);
+            endpoints.push(dispatcher.expr);
         }
 
         generated
@@ -359,7 +350,6 @@ fn collect(
         name: sig.ident.clone(),
         receiver: matches!(sig.inputs.first(), Some(FnArg::Receiver(_))),
         params,
-        output: sig.output.clone(),
     });
 
     for route in routes {

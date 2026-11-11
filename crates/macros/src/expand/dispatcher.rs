@@ -16,14 +16,17 @@ pub struct Naming {
     pub name: Option<Ident>,
     /// The struct's visibility; private when empty.
     pub vis: TokenStream,
+    /// Tells apart derived names of endpoints that share an owner, handler and method.
+    pub index: usize,
 }
 
 impl Naming {
-    /// A private struct with a derived name.
-    pub fn derived() -> Self {
+    /// A private struct with a derived name, made unique by `index`.
+    pub fn derived(index: usize) -> Self {
         Self {
             name: None,
             vis: TokenStream::new(),
+            index,
         }
     }
 }
@@ -57,7 +60,7 @@ pub fn dispatcher(
     let derived = naming.name.is_none();
     let name = naming
         .name
-        .unwrap_or_else(|| struct_name(ctx, handlers, partition));
+        .unwrap_or_else(|| struct_name(ctx, handlers, partition, naming.index));
     let vis = &naming.vis;
     let mut blocks = Vec::new();
 
@@ -193,7 +196,7 @@ pub fn dispatcher(
     })
 }
 
-fn struct_name(ctx: &Context, handlers: &[Handler], partition: &Partition) -> Ident {
+fn struct_name(ctx: &Context, handlers: &[Handler], partition: &Partition, index: usize) -> Ident {
     let owner = match ctx.owner.as_ref().map(|owner| owner.self_ty) {
         Some(Type::Path(path)) => path.path.segments.last().map_or_else(
             || String::from("Controller"),
@@ -210,10 +213,11 @@ fn struct_name(ctx: &Context, handlers: &[Handler], partition: &Partition) -> Id
         });
 
     format_ident!(
-        "__FastHttp_{}_{}_{}",
+        "__FastHttp_{}_{}_{}_{}",
         owner,
         first,
-        partition.method.constant()
+        partition.method.constant(),
+        index
     )
 }
 

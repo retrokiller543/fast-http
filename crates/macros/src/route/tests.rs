@@ -86,8 +86,7 @@ fn parse_name_value_attribute_is_an_error() {
 }
 
 #[test]
-fn name_and_constant_match_the_router_and_http() {
-    assert_eq!(HttpMethod::Delete.name(), "delete");
+fn constant_matches_http() {
     assert_eq!(HttpMethod::Delete.constant(), "DELETE");
 }
 

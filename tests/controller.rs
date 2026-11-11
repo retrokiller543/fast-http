@@ -13,7 +13,7 @@ use bytes::Bytes;
 use fast_http::{
     controller,
     core::{FromParts, FromRequest, Path, QueryParams, Rejection, ReqBody, Routes, buffer},
-    format::{Body, Query, RawQuery},
+    format::{Body, Query},
     router::Router,
 };
 use http::{HeaderMap, Method, Request, StatusCode, request::Parts};
@@ -519,14 +519,12 @@ struct Search<'a> {
 }
 
 #[fast_http::get("/search")]
-async fn search(raw: RawQuery<'_>) -> Result<String, fast_http::format::FormatError> {
-    let found: Search = raw.deserialize()?;
-
-    Ok(format!(
+async fn search(Query(found): Query<Search<'_>>) -> String {
+    format!(
         "{}:{}",
         found.term,
         matches!(found.term, std::borrow::Cow::Borrowed(_))
-    ))
+    )
 }
 
 #[tokio::test]

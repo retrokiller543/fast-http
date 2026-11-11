@@ -29,17 +29,6 @@ impl HttpMethod {
         }
     }
 
-    /// The lower-case name, which is also the name of the router's endpoint constructor.
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Get => "get",
-            Self::Post => "post",
-            Self::Put => "put",
-            Self::Patch => "patch",
-            Self::Delete => "delete",
-        }
-    }
-
     /// The name of the matching associated constant of `http::Method`.
     pub fn constant(self) -> &'static str {
         match self {

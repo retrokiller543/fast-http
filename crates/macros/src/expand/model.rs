@@ -20,8 +20,6 @@ pub struct Handler {
     pub receiver: bool,
     /// Its extractor arguments, in order.
     pub params: Vec<Param>,
-    /// Its declared return type.
-    pub output: syn::ReturnType,
 }
 
 /// One route attribute: a handler answering a method and pattern, perhaps behind guards.

@@ -11,13 +11,6 @@ pub struct Partition<'a> {
     pub variants: Vec<&'a Variant>,
 }
 
-impl Partition<'_> {
-    /// Whether the partition is one unguarded variant, which needs no dispatcher.
-    pub fn is_simple(&self) -> bool {
-        matches!(self.variants.as_slice(), [only] if only.guards.is_empty())
-    }
-}
-
 /// The partitions of one route pattern.
 pub struct RoutePlan<'a> {
     /// The route pattern.

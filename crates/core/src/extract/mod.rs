@@ -10,7 +10,7 @@ mod peer;
 mod query;
 
 pub use extension::Extension;
-pub use path::{FromParams, FromPathParam, Path, PathArgs, PathParams, Segments};
+pub use path::{FromParams, FromParamsAt, FromPathParam, Path, PathArgs, PathParams, Segments};
 pub use peer::{PeerAddr, WithPeer, with_peer};
 pub use query::QueryParams;
 

@@ -36,11 +36,11 @@ fn expand_builds_a_route_with_the_joined_pattern() {
     );
 
     assert!(out.contains("Route::new(\"/users/{id}\")?"));
-    assert!(out.contains("::fast_http::router::get("));
+    assert!(out.contains("Route::new(\"/users/{id}\")?"));
 }
 
 #[test]
-fn expand_unguarded_method_is_bound_without_a_dispatcher() {
+fn expand_unguarded_method_gets_a_generated_endpoint_that_never_declines() {
     let out = expand(
         quote!(),
         quote! {
@@ -51,18 +51,14 @@ fn expand_unguarded_method_is_bound_without_a_dispatcher() {
         },
     );
 
-    assert!(
-        out.contains(
-            "::fast_http::router::bind(::std::sync::Arc::clone(&self),Self::__fast_http_a)"
-        )
-    );
-    assert!(out.contains("__a0:Path<u64>,__a1:&Parts"));
-    assert!(out.contains("this.a(__a0,__a1).await"));
-    assert!(!out.contains("Endpointfor"));
+    assert!(out.contains("Endpointfor__FastHttp_Api_a_GET_0"));
+    assert!(out.contains("__this.a(__a0,__a1).await"));
+    assert!(!out.contains("router::bind"));
+    assert!(!out.contains("Ok(::std::option::Option::None)}.await"));
 }
 
 #[test]
-fn expand_method_without_receiver_is_used_directly() {
+fn expand_method_without_receiver_is_called_by_path() {
     let out = expand(
         quote!(),
         quote! {
@@ -73,7 +69,7 @@ fn expand_method_without_receiver_is_used_directly() {
         },
     );
 
-    assert!(out.contains("get(Self::health)"));
+    assert!(out.contains("<Api>::health()"));
     assert!(!out.contains("__fast_http_health"));
 }
 
@@ -275,7 +271,10 @@ fn expand_one_method_with_two_attributes_adds_two_endpoints() {
     );
 
     assert_eq!(out.matches("Route::new(").count(), 2);
-    assert_eq!(out.matches("asyncfn__fast_http_both").count(), 1);
+    assert_eq!(
+        out.matches("Endpointfor__FastHttp_Api_both_GET_").count(),
+        2
+    );
 }
 
 #[test]
@@ -364,7 +363,7 @@ fn expand_generic_controller_keeps_its_generics_on_the_dispatcher() {
         },
     );
 
-    assert!(out.contains("struct__FastHttp_Api_a_GET<T:Send>"));
+    assert!(out.contains("struct__FastHttp_Api_a_GET_0<T:Send>"));
     assert!(out.contains("this:::std::sync::Arc<Api<T>>"));
 }
 
@@ -732,14 +731,14 @@ fn routes_module_keeps_the_generated_endpoint_inside_the_module() {
         },
     );
     let module_end = out.rfind('}').expect("module end");
-    let endpoint = position(&out, "Endpointfor__FastHttp_Free_a_GET");
+    let endpoint = position(&out, "Endpointfor__FastHttp_Free_a_GET_0");
 
     assert!(endpoint < module_end);
-    assert!(out.contains("__FastHttp_Free_a_GET)"));
+    assert!(out.contains("__FastHttp_Free_a_GET_0)"));
 }
 
 #[test]
-fn routes_module_unguarded_function_is_called_directly() {
+fn routes_module_unguarded_function_gets_a_generated_endpoint() {
     let out = expand_routes(
         quote!(),
         quote! {
@@ -750,7 +749,7 @@ fn routes_module_unguarded_function_is_called_directly() {
         },
     );
 
-    assert!(out.contains("::fast_http::router::get(health)"));
+    assert!(out.contains("Endpointfor__FastHttp_Free_health_GET_0"));
 }
 
 #[test]

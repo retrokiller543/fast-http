@@ -7,11 +7,11 @@
 //! reads it takes the same body type, which is parsed lazily, once.
 
 use fast_http_core::{
-    ErrorHandler, FromParams, HandlerError, IntoOutcome, PathParams, Rejection, ReqBody, Response,
+    ErrorHandler, FromParamsAt, HandlerError, IntoOutcome, PathParams, Rejection, ReqBody, Response,
 };
 use http::{StatusCode, request::Parts};
 
-use crate::Extract;
+use crate::ExtractAt;
 
 /// Where a generated endpoint's body extractor gets the request body from.
 pub struct BodySource<B>(Option<B>);
@@ -36,25 +36,25 @@ impl<B: ReqBody> BodySource<B> {
 }
 
 /// Whether extracting `T` as the last argument consumes the request body.
-pub const fn uses_body<T: Extract<M>, M>() -> bool {
+pub const fn uses_body<'r, T: ExtractAt<'r, M>, M>() -> bool {
     T::USES_BODY
 }
 
 /// Extracts an argument that never reads the body.
-pub fn extract_head<'r, T: FromParams>(
+pub fn extract_head<'r, T: FromParamsAt<'r>>(
     parts: &'r Parts,
     params: &PathParams<'r>,
-) -> Result<T::At<'r>, T::Rejection> {
-    T::from_params(parts, params)
+) -> Result<T, T::Rejection> {
+    T::from_params_at(parts, params)
 }
 
 /// Extracts the last argument, which may read the body from `source`.
-pub fn extract_last<'r, T: Extract<M>, M, B: ReqBody>(
+pub fn extract_last<'r, T: ExtractAt<'r, M>, M, B: ReqBody>(
     parts: &'r Parts,
     params: &PathParams<'r>,
     source: &mut BodySource<B>,
-) -> impl Future<Output = Result<T::At<'r>, HandlerError>> + Send {
-    T::extract_from(parts, params, source)
+) -> impl Future<Output = Result<T, HandlerError>> + Send {
+    T::extract_at(parts, params, source)
 }
 
 fn unfilled() -> HandlerError {
