@@ -92,7 +92,7 @@ impl<T: FromRequest + Send> Extract<ViaBody> for T {
         _: &PathParams<'r>,
         source: &mut BodySource<B>,
     ) -> Result<Self, HandlerError> {
-        let body = source.take().await.map_err(HandlerError::new)?;
+        let body = source.take()?;
 
         T::from_request(parts, body)
             .await
