@@ -120,7 +120,7 @@ impl Library {
     }
 
     #[post(when(item.id == 20))]
-    async fn create_item(Body { value: item, .. }: Body<NewItem>) -> Negotiated<Item> {
+    async fn create_item(item: Body<NewItem>) -> Negotiated<Item> {
         Negotiated::new(Item {
             id: item.id,
             version: "created",
@@ -148,7 +148,7 @@ struct Orders;
 #[controller("/orders")]
 impl Orders {
     #[post(when(order.express))]
-    async fn express(&self, Body { value: order, .. }: Body<Order>) -> (StatusCode, String) {
+    async fn express(&self, order: Body<Order>) -> (StatusCode, String) {
         (
             StatusCode::ACCEPTED,
             format!("express order for item {}", order.item),
@@ -159,7 +159,7 @@ impl Orders {
     async fn standard(&self, order: Body<Order>) -> (StatusCode, String) {
         (
             StatusCode::ACCEPTED,
-            format!("standard order for item {}", order.value.item),
+            format!("standard order for item {}", order.item),
         )
     }
 }

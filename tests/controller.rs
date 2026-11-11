@@ -188,19 +188,19 @@ impl Chat {
         format!("static:{}", item.0)
     }
 
-    #[post("/job", when(matches!(job.value, Job::Fast { .. })))]
+    #[post("/job", when(matches!(**job, Job::Fast { .. })))]
     async fn job_fast(&self, job: Body<Job>) -> String {
-        format!("fast:{}", job.value.units())
+        format!("fast:{}", job.units())
     }
 
-    #[post("/job", when(matches!(job.value, Job::Slow { units } if units > 10)))]
+    #[post("/job", when(matches!(**job, Job::Slow { units } if units > 10)))]
     async fn job_big(&self, job: Body<Job>) -> String {
-        format!("big:{}", job.value.units())
+        format!("big:{}", job.units())
     }
 
     #[post("/job")]
     async fn job_slow(&self, job: Body<Job>) -> String {
-        format!("slow:{}", job.value.units())
+        format!("slow:{}", job.units())
     }
 }
 

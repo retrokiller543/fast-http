@@ -107,13 +107,13 @@ mod items {
     }
 
     #[post("/orders", when(order.express))]
-    async fn express(Body { value: order, .. }: Body<Order>) -> String {
+    async fn express(order: Body<Order>) -> String {
         format!("express:{}", order.item)
     }
 
     #[post("/orders")]
     async fn standard(order: Body<Order>) -> String {
-        format!("standard:{}", order.value.item)
+        format!("standard:{}", order.item)
     }
 }
 

@@ -2,7 +2,10 @@ use fast_http_core::{FromParamsAt, PathParams};
 use http::request::Parts;
 use serde::de::Deserialize;
 
-use crate::FormatError;
+use crate::{
+    FormatError,
+    wrapper::{Wrapper, transparent},
+};
 
 /// The query string deserialized into `T`, which may own its data or borrow from the request.
 ///
@@ -16,8 +19,29 @@ use crate::FormatError;
 /// function registered through `Route::get` cannot name how the lifetime maps to the request, so
 /// it takes `QueryParams` instead. Fields that are `Option` or have defaults may be absent; anything
 /// the struct cannot take is a 400.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Query<T>(pub T);
+
+impl<T> Wrapper for Query<T> {
+    type Inner = T;
+
+    fn get(&self) -> &T {
+        &self.0
+    }
+
+    fn get_mut(&mut self) -> &mut T {
+        &mut self.0
+    }
+
+    fn unwrap(self) -> T {
+        self.0
+    }
+
+    fn wrap(value: T) -> Self {
+        Self(value)
+    }
+}
+
+transparent!(value Query [T] [T]);
 
 impl<'r, T: Deserialize<'r> + Send> FromParamsAt<'r> for Query<T> {
     type Rejection = FormatError;

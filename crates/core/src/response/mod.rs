@@ -68,17 +68,3 @@ impl IntoResponse for Vec<u8> {
         ResponseBody::from(self).into_response()
     }
 }
-
-impl<T: IntoResponse> IntoResponse for (StatusCode, T) {
-    fn into_response(self) -> Response {
-        let (status, inner) = self;
-        let mut response = inner.into_response();
-
-        *response.status_mut() = status;
-
-        response
-    }
-}
-
-#[cfg(test)]
-mod tests;

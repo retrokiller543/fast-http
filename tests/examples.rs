@@ -266,6 +266,26 @@ async fn standalone_query_borrows_until_decoding_is_needed() {
 
 #[cfg(all(feature = "macros", feature = "form"))]
 #[tokio::test]
+async fn standalone_json_wrapper_takes_and_answers_json() {
+    let router = standalone_example::app().expect("routes");
+
+    let created = send(&router, Method::POST, "/notes", &[JSON], r#"{"text":"hi"}"#).await;
+    let refused = send(
+        &router,
+        Method::POST,
+        "/notes",
+        &[("content-type", "application/yaml")],
+        "text: hi",
+    )
+    .await;
+
+    assert_eq!(created.0, StatusCode::CREATED);
+    assert_eq!(created.1, r#"{"text":"hi"}"#);
+    assert_eq!(refused.0, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+}
+
+#[cfg(all(feature = "macros", feature = "form"))]
+#[tokio::test]
 async fn standalone_module_variants_and_ordering() {
     let router = standalone_example::app().expect("routes");
 

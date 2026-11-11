@@ -8,6 +8,7 @@
 //! curl http://127.0.0.1:3000/greet
 //! curl 'http://127.0.0.1:3000/greet?name=ada'
 //! curl http://127.0.0.1:3000/echo/ada
+//! curl -H 'content-type: application/json' -d '{"text":"hi"}' http://127.0.0.1:3000/notes
 //! curl 'http://127.0.0.1:3000/search?term=ada&page=2'
 //! curl 'http://127.0.0.1:3000/search?term=ada%20lovelace'
 //! curl http://127.0.0.1:3000/items
@@ -30,6 +31,9 @@
 //! `Query<T>` owns what it reads, or borrows from the request when its fields are
 //! `#[serde(borrow)] Cow<'a, str>`: `/search` copies `term` only when `%20` or `+` changes it.
 //!
+//! `Json<T>` takes and answers exactly one format, as `/notes` does; every serde format has such a
+//! wrapper (`Yaml<T>`, `Toml<T>`, ...), while `Body<T>` and `Negotiated<T>` pick from a set.
+//!
 //! A handler may return data borrowed from its arguments, as `echo` does: the request outlives
 //! the handler call, so `-> &str` is valid and is copied into the response.
 //!
@@ -38,13 +42,14 @@
 
 use std::{borrow::Cow, net::SocketAddr};
 
-use serde::Deserialize;
+use http::StatusCode;
+use serde::{Deserialize, Serialize};
 
 use fast_http::{
     core::{Path, QueryParams},
     endpoints,
-    format::Query,
-    get,
+    format::{Json, Query},
+    get, post,
     router::{PatternError, RouteList, Router},
     routes,
     server::Server,
@@ -89,6 +94,17 @@ async fn search(Query(found): Query<Search<'_>>) -> String {
     format!("{} ({how}), page {}", found.term, found.page.unwrap_or(1))
 }
 
+/// A note, read and answered as JSON only.
+#[derive(Deserialize, Serialize)]
+struct Note {
+    text: String,
+}
+
+#[post("/notes")]
+async fn create_note(note: Json<Note>) -> (StatusCode, Json<Note>) {
+    (StatusCode::CREATED, note)
+}
+
 #[get("/echo/{name}")]
 async fn echo(Path(name): Path<&str>) -> &str {
     name
@@ -130,7 +146,7 @@ mod items {
     }
 
     #[post("/orders", when(order.express))]
-    async fn express(Body { value: order, .. }: Body<Order>) -> (StatusCode, String) {
+    async fn express(order: Body<Order>) -> (StatusCode, String) {
         (
             StatusCode::ACCEPTED,
             format!("express order for item {}", order.item),
@@ -141,7 +157,7 @@ mod items {
     async fn standard(order: Body<Order>) -> (StatusCode, String) {
         (
             StatusCode::ACCEPTED,
-            format!("standard order for item {}", order.value.item),
+            format!("standard order for item {}", order.item),
         )
     }
 }
@@ -154,6 +170,7 @@ pub fn app() -> Result<Router<impl RouteList>, PatternError> {
         .route(endpoints![greet_named, greet])
         .route(echo)
         .route(search)
+        .route(create_note)
         .merge(items::routes()?))
 }
 

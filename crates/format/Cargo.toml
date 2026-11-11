@@ -47,3 +47,4 @@ tokio = { workspace = true, features = ["macros", "rt"] }
 [[bench]]
 name = "format"
 harness = false
+required-features = ["json"]

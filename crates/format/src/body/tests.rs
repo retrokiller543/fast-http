@@ -45,8 +45,7 @@ async fn from_request_matching_content_type_decodes() {
 async fn from_request_unlisted_content_type_is_unsupported() {
     let error = Body::<User, (Json,)>::from_request(&parts(Some("text/plain")), body("x"))
         .await
-        .err()
-        .expect("text/plain is not accepted");
+        .expect_err("text/plain is not accepted");
 
     assert!(matches!(error, FormatError::UnsupportedMediaType));
 }
@@ -55,8 +54,7 @@ async fn from_request_unlisted_content_type_is_unsupported() {
 async fn from_request_missing_content_type_is_rejected() {
     let error = Body::<User>::from_request(&parts(None), body("{}"))
         .await
-        .err()
-        .expect("content type is required");
+        .expect_err("content type is required");
 
     assert!(matches!(error, FormatError::MissingContentType));
 }
@@ -68,8 +66,7 @@ async fn from_request_over_limit_is_too_large() {
         body(r#"{"name":"ada"}"#),
     )
     .await
-    .err()
-    .expect("body exceeds the 4 byte limit");
+    .expect_err("body exceeds the 4 byte limit");
 
     assert!(matches!(error, FormatError::TooLarge { limit: 4 }));
 }
