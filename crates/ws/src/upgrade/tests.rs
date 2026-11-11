@@ -436,10 +436,12 @@ async fn upgrade_with_a_malformed_key_is_rejected() {
 }
 
 #[test]
-fn is_valid_key_accepts_only_base64_of_sixteen_bytes() {
+fn is_valid_key_accepts_only_canonical_base64_of_sixteen_bytes() {
     assert!(is_valid_key(b"dGhlIHNhbXBsZSBub25jZQ=="));
     assert!(!is_valid_key(b"invalid"));
     assert!(!is_valid_key(b"dGhlIHNhbXBsZSBub25jZQ="));
     assert!(!is_valid_key(b"dGhlIHNhbXBsZSBub25j*Q=="));
     assert!(!is_valid_key(b"dGhlIHNhbXBsZSBub25jZQAA"));
+    assert!(is_valid_key(b"AAAAAAAAAAAAAAAAAAAAAA=="));
+    assert!(!is_valid_key(b"AAAAAAAAAAAAAAAAAAAAAB=="));
 }

@@ -185,14 +185,16 @@ impl WebSocketUpgrade {
     }
 }
 
-/// Whether `key` has the shape RFC 6455 requires of `Sec-WebSocket-Key`: base64 of 16 bytes,
-/// which is 22 base64 characters followed by `==`.
+/// Whether `key` is what RFC 6455 requires of `Sec-WebSocket-Key`: the canonical base64 of 16
+/// bytes, which is 22 base64 characters followed by `==`, the last of which carries only 2 bits,
+/// so it is one of `A`, `Q`, `g` or `w`.
 fn is_valid_key(key: &[u8]) -> bool {
     key.len() == 24
         && key.ends_with(b"==")
-        && key[..22]
+        && key[..21]
             .iter()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/'))
+        && matches!(key[21], b'A' | b'Q' | b'g' | b'w')
 }
 
 fn requested_protocols(parts: &Parts) -> Vec<String> {

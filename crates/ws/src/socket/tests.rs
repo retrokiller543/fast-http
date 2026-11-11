@@ -141,3 +141,22 @@ async fn close_gives_up_when_the_peer_never_reads() {
 
     assert!(matches!(result, Ok(Ok(()))));
 }
+
+#[tokio::test]
+async fn close_reports_a_connection_dropped_before_the_reply() {
+    let (server, mut client) = pair().await;
+    let closing = tokio::spawn(server.close());
+
+    let frame = client.next().await.expect("close frame").expect("ok");
+
+    assert!(matches!(frame, tungstenite::Message::Close(_)));
+
+    drop(client);
+
+    let result = tokio::time::timeout(Duration::from_secs(1), closing)
+        .await
+        .expect("close finishes once the connection drops")
+        .expect("close task does not panic");
+
+    assert!(result.is_err());
+}

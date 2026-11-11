@@ -90,7 +90,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> WebSocket<S> {
 
     /// Closes the connection: sends a close frame without a status, then waits up to
     /// [`CLOSE_TIMEOUT`] for the peer's close reply so the handshake completes before the socket
-    /// is dropped.
+    /// is dropped. Fails when the connection breaks before the handshake completes; running out of
+    /// time is not an error, the socket is dropped either way.
     pub async fn close(self) -> Result<(), Error> {
         self.close_handshake(None).await
     }
@@ -102,7 +103,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> WebSocket<S> {
     }
 
     /// Sends the close frame and reads, discarding anything that is not the peer's close reply,
-    /// until the connection ends, all within one [`CLOSE_TIMEOUT`].
+    /// until the connection ends, all within one [`CLOSE_TIMEOUT`]. The connection ending
+    /// normally is success; a read error on the way, such as a reset, is returned.
     ///
     /// The deadline covers sending too, which flushes and can stall on a peer that stopped
     /// reading; when it passes, the socket is dropped, which frees its admission permit. When a
@@ -120,7 +122,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin> WebSocket<S> {
                 Err(error) => return Err(Error(error)),
             }
 
-            while let Some(Ok(_)) = self.inner.next().await {}
+            while let Some(read) = self.inner.next().await {
+                read.map_err(Error)?;
+            }
 
             Ok(())
         };
