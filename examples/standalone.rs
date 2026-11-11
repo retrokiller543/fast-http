@@ -17,9 +17,10 @@
 //! curl -H 'content-type: application/json' -d '{"item":7,"express":true}' http://127.0.0.1:3000/items/orders
 //! ```
 //!
-//! A lone `#[get(..)]` function becomes an endpoint named after the function, and `name.route()`
-//! builds its route. When its guard misses it declines the request, and the next endpoint
-//! registered on the same `Route` gets its turn, as `/greet` shows. Each lone function extracts
+//! A lone `#[get(..)]` function becomes an endpoint named after the function, and
+//! `Router::route(name)` registers it at its own path. `endpoints![a, b]` makes one route of
+//! several functions at the same path, which must agree on it at compile time. When a guard misses,
+//! the function declines and the next one gets its turn, as `/greet` shows. Each lone function extracts
 //! its own arguments and cannot hand on a body it has already read, which is the price of keeping
 //! them separate. To share extraction and one body parse across the variants of a path, put the
 //! functions in a `#[routes]` module: they are grouped, extracted lazily and at most once, exactly
@@ -40,10 +41,11 @@ use std::{borrow::Cow, net::SocketAddr};
 use serde::Deserialize;
 
 use fast_http::{
-    core::{EndpointSet, Path, QueryParams},
+    core::{Path, QueryParams},
+    endpoints,
     format::Query,
     get,
-    router::{PatternError, Route, RouteList, Router},
+    router::{PatternError, RouteList, Router},
     routes,
     server::Server,
     transport::Tcp,
@@ -90,10 +92,6 @@ async fn search(Query(found): Query<Search<'_>>) -> String {
 #[get("/echo/{name}")]
 async fn echo(Path(name): Path<&str>) -> &str {
     name
-}
-
-fn standalone_routes() -> Result<Route<impl EndpointSet>, PatternError> {
-    Ok(Route::new("/greet")?.endpoint(greet_named).endpoint(greet))
 }
 
 #[routes("/items")]
@@ -151,11 +149,11 @@ mod items {
 /// The router of the example.
 pub fn app() -> Result<Router<impl RouteList>, PatternError> {
     Ok(Router::new()
-        .route(health.route()?)
-        .route(admin.route()?)
-        .route(standalone_routes()?)
-        .route(echo.route()?)
-        .route(search.route()?)
+        .route(health)
+        .route(admin)
+        .route(endpoints![greet_named, greet])
+        .route(echo)
+        .route(search)
         .merge(items::routes()?))
 }
 

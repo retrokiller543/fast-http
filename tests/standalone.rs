@@ -3,8 +3,8 @@
 use bytes::Bytes;
 use fast_http::{
     core::{Path, Routes},
-    get, post, route,
-    router::{Route, Router},
+    endpoints, get, post, route,
+    router::Router,
     routes,
 };
 use http::{Method, Request, StatusCode};
@@ -147,13 +147,8 @@ async fn send<R: Routes>(
 
 fn standalone() -> Router<impl fast_http::router::RouteList> {
     Router::new()
-        .route(health.route().expect("valid route"))
-        .route(
-            Route::new("/deep")
-                .expect("valid route")
-                .endpoint(deep_full)
-                .endpoint(deep_plain),
-        )
+        .route(health)
+        .route(endpoints![deep_full, deep_plain])
 }
 
 #[tokio::test]
@@ -172,7 +167,7 @@ async fn standalone_guard_reads_the_query_view() {
 }
 
 fn health_with_guard() -> Router<impl fast_http::router::RouteList> {
-    Router::new().route(deep_full.route().expect("valid route"))
+    Router::new().route(deep_full)
 }
 
 #[tokio::test]
@@ -195,7 +190,7 @@ async fn standalone_guard_miss_is_a_client_error() {
 
 #[tokio::test]
 async fn standalone_guarded_function_reads_headers_without_declaring_them() {
-    let router = Router::new().route(echo_upper.route().expect("valid route"));
+    let router = Router::new().route(echo_upper);
 
     let hit = send(&router, Method::POST, "/echo", &[("x-upper", "1")], "").await;
     let miss = send(&router, Method::POST, "/echo", &[], "").await;
@@ -272,9 +267,7 @@ async fn routes_module_merges_into_a_router() {
 
 #[tokio::test]
 async fn route_general_form_works_on_lone_functions() {
-    let router = Router::new()
-        .route(general.route().expect("valid route"))
-        .route(general_post.route().expect("valid route"));
+    let router = Router::new().route(general).route(general_post);
 
     let hit = send(&router, Method::GET, "/general?on", &[], "").await;
     let post = send(&router, Method::POST, "/general-post", &[], "").await;
@@ -301,7 +294,7 @@ async fn route_general_form_mixes_with_the_shorthands_in_a_module() {
 
 #[tokio::test]
 async fn lone_function_may_return_data_borrowed_from_its_arguments() {
-    let router = Router::new().route(echo.route().expect("valid route"));
+    let router = Router::new().route(echo);
 
     assert_eq!(
         send(&router, Method::GET, "/echo/ada", &[], "").await.1,
@@ -323,4 +316,10 @@ async fn module_variants_may_return_borrowed_data_and_name_lifetimes() {
         send(&router, Method::GET, "/borrowed/ada", &[], "").await.1,
         "short:ada"
     );
+}
+
+#[tokio::test]
+async fn lone_function_exposes_its_attribute_path() {
+    assert_eq!(deep_full::PATH, "/deep");
+    assert_eq!(general::PATH, "/general");
 }

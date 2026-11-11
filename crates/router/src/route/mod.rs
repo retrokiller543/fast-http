@@ -5,8 +5,10 @@ use fast_http_core::{
 
 use crate::{FnEndpoint, Handler, ParamBuf, Pattern, PatternError, handler};
 
+pub use self::into::{IntoRoute, attributed, same_path};
 pub use self::list::{Append, Level, RouteList};
 
+mod into;
 mod list;
 
 /// A route pattern together with the endpoints that answer it and the flow wrapped around them.

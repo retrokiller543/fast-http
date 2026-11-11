@@ -23,6 +23,7 @@ pub use fast_http_macros::{controller, delete, get, patch, post, put, route, rou
 #[cfg(feature = "multipart")]
 pub use fast_http_multipart as multipart;
 pub use fast_http_router as router;
+pub use fast_http_router::endpoints;
 pub use fast_http_server as server;
 pub use fast_http_transport as transport;
 #[cfg(feature = "ws")]

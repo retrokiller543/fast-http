@@ -3,7 +3,7 @@ use fast_http_core::{
     PathParams, Rejection, ReqBody, Request, Response, Routes, Stack, flow,
 };
 
-use crate::{Append, ParamBuf, Pattern, Route, RouteList};
+use crate::{Append, IntoRoute, ParamBuf, Pattern, Route, RouteList};
 
 use self::index::Index;
 
@@ -43,13 +43,17 @@ impl Default for Router<()> {
 impl<L: RouteList, H, F> Router<L, H, F> {
     /// Appends `route`; routes are tried in the order they are added.
     ///
+    /// Takes a [`Route`], or a function a route attribute turned into an endpoint, which becomes
+    /// the route at its own path.
+    ///
     /// # Panics
     ///
     /// When the router already holds `u32::MAX` routes.
-    pub fn route<S, G>(self, route: Route<S, G>) -> Router<L::Output, H, F>
+    pub fn route<R: IntoRoute>(self, route: R) -> Router<L::Output, H, F>
     where
-        L: Append<Route<S, G>>,
+        L: Append<Route<R::Set, R::Flow>>,
     {
+        let route = route.into_route();
         let mut index = self.index;
 
         index.push(route.pattern().first_literal(), L::LEN);

@@ -214,16 +214,6 @@ impl Ping {
     }
 }
 
-struct Broken;
-
-#[controller]
-impl Broken {
-    #[get("/a/**/b")]
-    async fn broken(&self) -> &'static str {
-        "never"
-    }
-}
-
 fn chat() -> Router<impl fast_http::router::RouteList> {
     Arc::new(Chat { greeting: "hi" })
         .routes()
@@ -407,11 +397,6 @@ async fn controllers_merge_into_one_router() {
     );
 }
 
-#[test]
-fn routes_reports_a_malformed_pattern() {
-    assert!(Arc::new(Broken).routes().is_err());
-}
-
 #[tokio::test]
 async fn controller_guard_reads_headers_and_query_without_declaring_them() {
     let ok = send(
@@ -529,7 +514,7 @@ async fn search(Query(found): Query<Search<'_>>) -> String {
 
 #[tokio::test]
 async fn raw_query_hands_a_handler_borrowed_fields() {
-    let router = Router::new().route(search.route().expect("valid route"));
+    let router = Router::new().route(search);
 
     let plain = send(&router, Method::GET, "/search?term=ada", None, "").await;
     let encoded = send(&router, Method::GET, "/search?term=a%20b", None, "").await;

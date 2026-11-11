@@ -36,7 +36,71 @@ pub fn join(prefix: Option<&LitStr>, route: &LitStr) -> syn::Result<LitStr> {
         joined
     };
 
+    check_segments(&joined).map_err(|message| Error::new_spanned(route, message))?;
+
     Ok(LitStr::new(&joined, route.span()))
+}
+
+/// Most path parameters one route can capture, as the router enforces.
+const MAX_PARAMS: usize = 16;
+
+/// Applies the router's segment rules at compile time, so a route attribute's pattern always
+/// parses: no empty segment, every `{}` named, `**` last, no repeated name, at most
+/// [`MAX_PARAMS`] parameters.
+fn check_segments(pattern: &str) -> Result<(), String> {
+    let mut names: Vec<&str> = Vec::new();
+    let body = &pattern[1..];
+
+    if body.is_empty() {
+        return Ok(());
+    }
+
+    let segments: Vec<&str> = body.split('/').collect();
+
+    for (index, raw) in segments.iter().enumerate() {
+        let last = index + 1 == segments.len();
+        let name = match *raw {
+            "" => return Err(format!("pattern `{pattern}` has an empty segment")),
+            "*" => None,
+            "**" if last => None,
+            "**" => {
+                return Err(format!(
+                    "pattern `{pattern}` has a wildcard that is not last"
+                ));
+            }
+            _ => match raw.strip_prefix('{').and_then(|raw| raw.strip_suffix('}')) {
+                None => None,
+                Some("" | "**") => {
+                    return Err(format!("pattern `{pattern}` has an unnamed parameter"));
+                }
+                Some(inner) => match inner.strip_prefix("**") {
+                    Some(_) if !last => {
+                        return Err(format!(
+                            "pattern `{pattern}` has a wildcard that is not last"
+                        ));
+                    }
+                    Some(name) => Some(name),
+                    None => Some(inner),
+                },
+            },
+        };
+
+        if let Some(name) = name {
+            if names.contains(&name) {
+                return Err(format!("pattern `{pattern}` repeats parameter `{name}`"));
+            }
+
+            names.push(name);
+        }
+    }
+
+    if names.len() > MAX_PARAMS {
+        return Err(format!(
+            "pattern `{pattern}` captures more than {MAX_PARAMS} parameters"
+        ));
+    }
+
+    Ok(())
 }
 
 fn check_prefix(prefix: &LitStr, text: &str) -> syn::Result<()> {

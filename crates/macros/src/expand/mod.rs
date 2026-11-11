@@ -193,14 +193,16 @@ pub fn standalone(
         #(#errors)*
 
         impl #name {
-            /// The route at this function's path, with this function as its endpoint.
-            #vis fn route(
-                &self,
-            ) -> ::std::result::Result<
-                #krate::router::Route<impl #krate::core::EndpointSet>,
-                #krate::router::PatternError,
-            > {
-                ::std::result::Result::Ok(#krate::router::Route::new(#pattern)?.endpoint(#name))
+            /// The path of this function's route attribute.
+            #vis const PATH: &'static str = #pattern;
+        }
+
+        impl #krate::router::IntoRoute for #name {
+            type Set = (#name,);
+            type Flow = #krate::core::Identity;
+
+            fn into_route(self) -> #krate::router::Route<(#name,), #krate::core::Identity> {
+                #krate::router::route::attributed(Self::PATH).endpoint(self)
             }
         }
     })

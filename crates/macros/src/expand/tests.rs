@@ -781,7 +781,7 @@ fn routes_module_function_with_a_receiver_is_rejected() {
 }
 
 #[test]
-fn standalone_function_becomes_a_unit_struct_with_a_route_helper() {
+fn standalone_function_becomes_a_unit_struct_that_is_its_own_route() {
     let out = expand_standalone(
         HttpMethod::Get,
         quote!("/deep", when(query.contains("full"))),
@@ -793,11 +793,9 @@ fn standalone_function_becomes_a_unit_struct_with_a_route_helper() {
     assert!(out.contains("pubstructdeep;"));
     assert!(out.contains("asyncfn__fast_http_handler_deep("));
     assert!(out.contains("::fast_http::core::Endpointfordeep"));
-    assert!(
-        out.contains("implRoute::new(\"/deep\")")
-            || out.contains("Route::new(\"/deep\")?.endpoint(deep)")
-    );
-    assert!(out.contains("pubfnroute(&self,)"));
+    assert!(out.contains("pubconstPATH:&'staticstr=\"/deep\";"));
+    assert!(out.contains("::fast_http::router::IntoRoutefordeep"));
+    assert!(out.contains("attributed(Self::PATH).endpoint(self)"));
     assert!(out.contains("__fast_http_handler_deep(__a0)"));
 }
 
@@ -821,7 +819,7 @@ fn standalone_without_a_path_is_the_root() {
         quote! { async fn a() -> String { String::new() } },
     );
 
-    assert!(out.contains("Route::new(\"/\")?"));
+    assert!(out.contains("constPATH:&'staticstr=\"/\";"));
     assert!(out.contains("::fast_http::core::http::Method::POST"));
 }
 
