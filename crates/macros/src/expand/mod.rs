@@ -15,6 +15,7 @@ use crate::{
 };
 
 mod dispatcher;
+mod group;
 mod model;
 mod partition;
 
@@ -29,7 +30,23 @@ use self::{
 /// Expands `#[controller(args)]` applied to an impl block `item`.
 pub fn controller(args: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
     let args: ControllerArgs = syn::parse2(args)?;
-    let mut item: ItemImpl = syn::parse2(item)?;
+    let mut item = match syn::parse2::<Item>(item)? {
+        Item::Impl(item) => item,
+        Item::Struct(item) => return group::controller_struct(&args, &item),
+        other => {
+            return Err(Error::new_spanned(
+                other,
+                "#[controller] applies to an inherent impl block, or to a struct with `groups(..)`",
+            ));
+        }
+    };
+
+    if let Some(first) = args.groups.first() {
+        return Err(Error::new_spanned(
+            first,
+            "`groups(..)` belongs on the controller struct; an impl block names its own with `group = name`",
+        ));
+    }
 
     if let Some((_, path, _)) = &item.trait_ {
         return Err(Error::new_spanned(
@@ -63,9 +80,10 @@ pub fn controller(args: TokenStream, item: TokenStream) -> syn::Result<TokenStre
             self_ty: &item.self_ty,
             generics: &item.generics,
         }),
+        base: group::base(&args),
     };
     let generated = generate(&ctx, &handlers, &plans)?;
-    let routes = routes_fn(&ctx, &generated.routes);
+    let routes = routes_fn(&ctx, &generated.routes, args.group.as_ref());
 
     for member in generated.members {
         item.items.push(syn::parse2(member)?);
@@ -82,6 +100,13 @@ pub fn controller(args: TokenStream, item: TokenStream) -> syn::Result<TokenStre
 /// Expands `#[routes(args)]` applied to an inline module `item` of free functions.
 pub fn routes(args: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
     let args: ControllerArgs = syn::parse2(args)?;
+
+    if let Some(key) = args.group.as_ref().or(args.groups.first()) {
+        return Err(Error::new_spanned(
+            key,
+            "groups belong to a #[controller] struct and its impl blocks",
+        ));
+    }
     let mut module: ItemMod = syn::parse2(item)?;
     let Some((_, items)) = &mut module.content else {
         return Err(Error::new_spanned(
@@ -111,9 +136,10 @@ pub fn routes(args: TokenStream, item: TokenStream) -> syn::Result<TokenStream> 
     let ctx = Context {
         krate: &args.krate,
         owner: None,
+        base: None,
     };
     let generated = generate(&ctx, &handlers, &plans)?;
-    let routes = routes_fn(&ctx, &generated.routes);
+    let routes = routes_fn(&ctx, &generated.routes, None);
 
     for extra in generated.extra {
         items.extend(syn::parse2::<syn::File>(extra)?.items);
@@ -170,6 +196,7 @@ pub fn standalone(
     let ctx = Context {
         krate: &krate,
         owner: None,
+        base: None,
     };
     let partition = &plans[0].partitions[0];
     let generated = dispatcher::dispatcher(
@@ -264,6 +291,10 @@ fn generate(ctx: &Context, handlers: &[Handler], plans: &[RoutePlan]) -> syn::Re
 
     for route in plans {
         let pattern = &route.pattern;
+        let start = match &ctx.base {
+            Some(base) => quote!(#krate::router::Route::under(#base, #pattern)),
+            None => quote!(#krate::router::Route::new(#pattern)),
+        };
         let mut endpoints = Vec::new();
 
         for partition in &route.partitions {
@@ -280,22 +311,36 @@ fn generate(ctx: &Context, handlers: &[Handler], plans: &[RoutePlan]) -> syn::Re
 
         generated
             .routes
-            .push(quote!(.route(#krate::router::Route::new(#pattern)? #(.endpoint(#endpoints))*)));
+            .push(quote!(.route(#start? #(.endpoint(#endpoints))*)));
     }
 
     Ok(generated)
 }
 
-fn routes_fn(ctx: &Context, routes: &[TokenStream]) -> TokenStream {
+fn routes_fn(ctx: &Context, routes: &[TokenStream], group: Option<&Ident>) -> TokenStream {
     let krate = ctx.krate;
     let receiver = ctx
         .owner
         .as_ref()
         .map(|_| quote!(self: ::std::sync::Arc<Self>,));
+    let signature = match group {
+        Some(group) => {
+            let name = group::group_fn(group);
+
+            quote! {
+                /// Builds the router of this group, under the controller's path.
+                #[doc(hidden)]
+                pub(crate) fn #name
+            }
+        }
+        None => quote! {
+            /// Builds the router of these routes from their route attributes.
+            pub fn routes
+        },
+    };
 
     quote! {
-        /// Builds the router of these routes from their route attributes.
-        pub fn routes(
+        #signature(
             #receiver
         ) -> ::std::result::Result<
             #krate::router::Router<impl #krate::router::RouteList>,

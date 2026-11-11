@@ -12,7 +12,7 @@ let router = Router::new()
     .route(Route::new("/users")?.post(create));
 ```
 
-Routes and endpoints are tried in the order they are added. `Route::endpoint(e)` adds any `Endpoint`, such as a guarded `get(handler).guard(..)`.
+A request goes to the most specific route that matches (a literal segment before `{param}`, before `*`, before `**`), and equally specific routes are tried in the order they are added; adding a route that matches exactly the paths of an earlier one panics, since one of them could never be reached. Endpoints of a route are tried in the order they are added. `Router::route` also takes a function marked with a route attribute, `endpoints![a, b]` makes one route of several such functions at the same path, and `Route::under(base, path)` joins a controller's path in front of a route's. `Route::endpoint(e)` adds any `Endpoint`, such as a guarded `get(handler).guard(..)`.
 
 For large tables, build routes in groups (one function per controller, say) and join them with `Router::merge`:
 

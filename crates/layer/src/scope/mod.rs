@@ -1,6 +1,4 @@
-use fast_http_core::{
-    ErrorHandler, Flow, Next, ReqBody, Request, Response, controller::strip_prefix,
-};
+use fast_http_core::{ErrorHandler, Flow, Next, ReqBody, Request, Response, prefix::strip_prefix};
 
 /// Runs `flow` only for requests whose path lies under `prefix`; every other request skips it.
 ///

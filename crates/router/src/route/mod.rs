@@ -30,6 +30,18 @@ impl Route<()> {
     }
 }
 
+impl Route<()> {
+    /// Parses `pattern` under `base`, such as a route of a controller group under the controller's
+    /// path; see [`Pattern::join`].
+    pub fn under(base: &'static str, pattern: &'static str) -> Result<Self, PatternError> {
+        Ok(Self {
+            pattern: Pattern::join(base, pattern)?,
+            set: (),
+            flow: Identity,
+        })
+    }
+}
+
 macro_rules! method_shorthand {
     ($($name:ident),+) => {
         $(

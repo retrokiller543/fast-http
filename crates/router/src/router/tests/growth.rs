@@ -42,7 +42,7 @@ fn router_past_sixteen_routes_dispatches_across_level_carries() {
 }
 
 #[test]
-fn router_keeps_declaration_order_across_level_carries() {
+fn router_prefers_the_more_specific_route_across_level_carries() {
     let head = numbered!(Router::new();
         0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19);
     let router =
@@ -50,7 +50,7 @@ fn router_keeps_declaration_order_across_level_carries() {
 
     assert_eq!(text_of(&router, "/r5"), "route 5");
     assert_eq!(text_of(&router, "/r19"), "route 19");
-    assert_eq!(text_of(&router, "/r21"), "any");
+    assert_eq!(text_of(&router, "/r21"), "route 21");
     assert_eq!(text_of(&router, "/other"), "any");
 }
 
@@ -79,7 +79,7 @@ fn empty_router_returns_404() {
 }
 
 #[test]
-fn merge_appends_groups_in_order() {
+fn merge_prefers_the_more_specific_route_whatever_the_group_order() {
     let users = numbered!(Router::new(); 0 1 2);
     let fallback = Router::new().route(Route::new("/{name}").expect("valid pattern").get(any));
     let late = numbered!(Router::new(); 3);
@@ -90,5 +90,20 @@ fn merge_appends_groups_in_order() {
 
     assert_eq!(text_of(&router, "/r10"), "route 10");
     assert_eq!(text_of(&router, "/r2"), "route 2");
-    assert_eq!(text_of(&router, "/r3"), "any");
+    assert_eq!(text_of(&router, "/r3"), "route 3");
+    assert_eq!(text_of(&router, "/other"), "any");
+}
+
+#[test]
+#[should_panic(expected = "matches the same paths as `/{name}`")]
+fn route_with_the_shape_of_an_earlier_one_is_refused() {
+    let _ = Router::new()
+        .route(Route::new("/{name}").expect("valid pattern").get(any))
+        .route(Route::new("/{other}").expect("valid pattern").get(any));
+}
+
+#[test]
+#[should_panic(expected = "matches the same paths as `/r0`")]
+fn merged_route_with_the_shape_of_an_existing_one_is_refused() {
+    let _ = numbered!(Router::new(); 0).merge(numbered!(Router::new(); 0));
 }

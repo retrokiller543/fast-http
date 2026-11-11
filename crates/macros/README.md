@@ -34,13 +34,38 @@ let router = Router::new().merge(Arc::new(chat).routes()?);
 - **`#[route(METHOD, "/path", when(..))]`** is the general form of a route attribute, with `METHOD` one of `GET`, `POST`, `PUT`, `PATCH` or `DELETE` in any case. `#[get(..)]`, `#[post(..)]`, `#[put(..)]`, `#[patch(..)]` and `#[delete(..)]` are shorthands for it, and it works wherever they do: on a lone function, on a method of a controller and on a function of a `#[routes]` module.
 - **`#[get("/path", when(..))] async fn name(..)`** on a lone function makes `name` a unit struct that implements `Endpoint` and `IntoRoute`, with its path as `name::PATH`: `Router::new().route(name)` registers it at that path, and `endpoints![a, b]` makes one route of several functions that share a path, which is checked at compile time. The body stays in a hidden function. A lone function is a complete endpoint, and when its guard misses it declines the request, so the next endpoint of the same route (`endpoints![a, b]`) gets its turn, and the guard miss status is the answer when none accepts. Each lone function extracts its own arguments, so a type that two of them take is extracted twice, and a function that already read the body cannot hand it on: its miss ends the request. That trade is yours to make; to share extraction and a single body parse across variants of one path, use a `#[routes]` module or a controller.
 
+### Controllers split over several impl blocks
+
+```rust
+#[controller("/library", groups(catalog, admin))]
+pub struct Library { name: &'static str }
+
+#[controller(group = catalog)]
+impl Library {
+    #[get("/items/{id}")]               // /library/items/{id}
+    async fn item(&self, Path(id): Path<u64>) -> String { /* .. */ }
+}
+
+#[controller(group = admin, "/admin")]  // may live in another module
+impl Library {
+    #[delete("/items/{id}")]            // /library/admin/items/{id}
+    async fn remove(&self) -> StatusCode { /* .. */ }
+}
+
+let router = Router::new().merge(Arc::new(library).routes()?);
+```
+
+The struct implements `fast_http::router::Controller`, whose `PATH` is the struct's path, and gets `routes(self: Arc<Self>)`, which merges the router of every listed group. Each `group = name` block is one router: its own optional prefix and route paths are joined at compile time, and the controller's path is put in front of them once, at startup. Every block shares the struct's state through `&self`. Variants of one method and path must sit in one block, because only a block shares extraction between them.
+
+Rust cannot enumerate the impl blocks of a type, and link-section registries such as `linkme` cannot give each controller its own list on every platform, so the struct names its groups. The compiler checks the list from both sides: a listed group without a block is a compile error at its name, and a block that no struct lists leaves its handlers unused, which warns. `Controller` can also be implemented by hand, and the single-block form `#[controller("/prefix")] impl T` is unchanged.
+
 ### Why a module for variants
 
 Two functions are variants of one path only if one generated endpoint sees both, because that endpoint is what extracts each argument type once and runs the guards lazily in order. An attribute macro sees only the item it is on, so something has to group the variants: an `impl` block (`#[controller]`), a module (`#[routes]`), or nothing, in which case each function is its own complete endpoint.
 
 The optional first argument is a path prefix (controller and module); `crate = path` names the crate providing the facade modules `router` and `core` (default `::fast_http`). `#[get]`, `#[post]`, `#[put]`, `#[patch]` and `#[delete]` mark a function as an endpoint. The path may be omitted, as in `#[post]` or `#[post(when(..))]`, for the prefix itself. Several attributes on one function add several endpoints. Functions must be `async fn` and non-generic. The generated `routes()` returns the router, or the `PatternError` of the first malformed pattern.
 
-Routes are ordered most specific first: a literal segment beats `{param}`, which beats `*` and `**`. So `/items/orders` is tried before `/items/{id}` whatever order they are declared in, which matters because the router uses the first route that matches and does not fall through to a later one. Routes that are equally specific, and the variants within a route, keep their declaration order.
+Routes are ordered most specific first: a literal segment beats `{param}`, which beats `*` and `**`. So `/items/orders` is tried before `/items/{id}` whatever order they are declared in, which matters because the router uses the first route that matches and does not fall through to a later one. The router applies the same order across everything it holds, so it also holds between groups, controllers and hand-written routes. Routes that are equally specific, and the variants within a route, keep their declaration order. Two routes that match exactly the same paths are refused when the router is built.
 
 ### Guards
 

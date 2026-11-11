@@ -48,6 +48,12 @@ use proc_macro::TokenStream;
 ///
 /// The generated `routes(self: Arc<Self>)` returns the router, or the `PatternError` of the first
 /// malformed route pattern.
+///
+/// A controller can also span several impl blocks. On a struct, `#[controller("/path",
+/// groups(a, b))]` implements `fast_http_router::Controller` and adds a `routes` that merges the
+/// listed groups; each `#[controller(group = a, "/prefix")]` impl block is one of them, under the
+/// struct's path and its own optional prefix. A listed group without a block fails to compile, and
+/// a block nobody lists leaves its handlers unused, which warns.
 #[proc_macro_attribute]
 pub fn controller(args: TokenStream, item: TokenStream) -> TokenStream {
     let original: proc_macro2::TokenStream = item.clone().into();

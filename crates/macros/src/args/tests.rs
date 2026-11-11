@@ -47,3 +47,26 @@ fn parse_unknown_argument_is_an_error() {
 
     assert!(error.to_string().contains("expected a path prefix"));
 }
+
+#[test]
+fn parse_groups_lists_the_impl_blocks() {
+    let args = parse(quote!("/library", groups(catalog, admin))).expect("parses");
+    let groups: Vec<_> = args.groups.iter().map(ToString::to_string).collect();
+
+    assert_eq!(groups, ["catalog", "admin"]);
+}
+
+#[test]
+fn parse_group_names_the_block() {
+    let args = parse(quote!(group = admin, "/admin")).expect("parses");
+
+    assert_eq!(args.group.expect("group").to_string(), "admin");
+    assert_eq!(args.prefix.expect("prefix").value(), "/admin");
+}
+
+#[test]
+fn parse_unknown_key_is_an_error() {
+    let error = parse(quote!(grop = admin)).map(drop).expect_err("error");
+
+    assert!(error.to_string().contains("`group = name`"));
+}

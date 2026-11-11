@@ -50,4 +50,7 @@ pub struct Context<'a> {
     pub krate: &'a syn::Path,
     /// The impl block, or `None` for free functions, which have no receiver and no state.
     pub owner: Option<Owner<'a>>,
+    /// The base path routes are joined under at startup, such as a controller group's
+    /// `<Self as Controller>::PATH`; `None` when the patterns are complete.
+    pub base: Option<proc_macro2::TokenStream>,
 }

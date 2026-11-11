@@ -1,11 +1,13 @@
 //! Static, allocation-free request routing over typed controllers.
 
+pub mod controller;
 pub mod dispatch;
 pub mod handler;
 pub mod pattern;
 pub mod route;
 pub mod router;
 
+pub use controller::Controller;
 pub use handler::{
     Bind, Bound, Extract, ExtractAt, FnEndpoint, Handler, bind, delete, get, patch, post, put,
 };
