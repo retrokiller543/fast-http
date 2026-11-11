@@ -127,3 +127,17 @@ async fn close_after_the_peer_closed_still_succeeds() {
 
     assert!(result.is_ok(), "{result:?}");
 }
+
+#[tokio::test(start_paused = true)]
+async fn close_gives_up_when_the_peer_never_reads() {
+    let (server, _client) = duplex(16);
+    let server = WebSocket::from_io(server, None, WebSocketConfig::default()).await;
+    let frame = CloseFrame {
+        code: close_code::AWAY,
+        reason: Utf8Bytes::from_static("a reason longer than the sixteen byte pipe"),
+    };
+
+    let result = tokio::time::timeout(CLOSE_TIMEOUT * 2, server.close_with(frame)).await;
+
+    assert!(matches!(result, Ok(Ok(()))));
+}

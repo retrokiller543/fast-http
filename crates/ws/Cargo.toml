@@ -29,4 +29,4 @@ fast-http-transport.workspace = true
 futures-util.workspace = true
 http-body-util.workspace = true
 hyper = { workspace = true, features = ["client", "http1"] }
-tokio = { workspace = true, features = ["io-util", "macros", "rt", "sync", "time"] }
+tokio = { workspace = true, features = ["io-util", "macros", "rt", "sync", "test-util", "time"] }
