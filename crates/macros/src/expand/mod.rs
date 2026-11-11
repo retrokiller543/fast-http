@@ -1,17 +1,27 @@
+use std::collections::BTreeSet;
+
 use proc_macro2::TokenStream;
-use quote::{ToTokens, format_ident, quote};
-use syn::{Error, FnArg, ImplItem, ImplItemFn, ItemImpl, LitStr, Path};
+use quote::quote;
+use syn::{Error, FnArg, ImplItem, ImplItemFn, ItemImpl};
 
 use crate::{
     args::ControllerArgs,
+    guard::{analyze, bindings},
     path::join,
-    route::{HttpMethod, RouteAttr},
-    when::Condition,
+    route::RouteAttr,
 };
 
-mod group;
+mod dispatcher;
+mod model;
+mod partition;
+mod simple;
 
-use self::group::{Endpoint, Group, group};
+pub use model::{Handler, Param};
+
+use self::{
+    model::{Context, Variant},
+    partition::{RoutePlan, plan},
+};
 
 /// Expands `#[controller(args)]` applied to `item`.
 pub fn controller(args: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
@@ -25,32 +35,101 @@ pub fn controller(args: TokenStream, item: TokenStream) -> syn::Result<TokenStre
         ));
     }
 
-    let mut endpoints = Vec::new();
-    let mut wrappers = Vec::new();
+    let mut handlers = Vec::new();
+    let mut variants = Vec::new();
 
     for member in &mut item.items {
         if let ImplItem::Fn(method) = member {
-            collect(method, &args, &mut endpoints, &mut wrappers)?;
+            collect(method, &args, &mut handlers, &mut variants)?;
         }
     }
 
-    let groups = group(endpoints)?;
-    let routes = routes_fn(&args.krate, &groups);
+    let plans = plan(&variants)?;
+    let ctx = Context {
+        krate: &args.krate,
+        self_ty: &item.self_ty,
+        generics: &item.generics,
+    };
+    let generated = generate(&ctx, &handlers, &plans)?;
+    let routes = routes_fn(&ctx, &generated.routes);
 
-    for wrapper in wrappers {
-        item.items.push(syn::parse2(wrapper)?);
+    for member in generated.members {
+        item.items.push(syn::parse2(member)?);
     }
 
     item.items.push(syn::parse2(routes)?);
 
-    Ok(item.into_token_stream())
+    let extra = generated.extra;
+
+    Ok(quote!(#item #(#extra)*))
+}
+
+struct Generated {
+    members: Vec<TokenStream>,
+    extra: Vec<TokenStream>,
+    routes: Vec<TokenStream>,
+}
+
+fn generate(ctx: &Context, handlers: &[Handler], plans: &[RoutePlan]) -> syn::Result<Generated> {
+    let krate = ctx.krate;
+    let mut generated = Generated {
+        members: Vec::new(),
+        extra: Vec::new(),
+        routes: Vec::new(),
+    };
+    let mut wrapped = BTreeSet::new();
+
+    for route in plans {
+        let pattern = &route.pattern;
+        let mut endpoints = Vec::new();
+
+        for partition in &route.partitions {
+            if partition.is_simple() {
+                let index = partition.variants[0].handler;
+                let handler = &handlers[index];
+
+                if handler.receiver && wrapped.insert(index) {
+                    generated.members.push(simple::wrapper_fn(handler));
+                }
+
+                endpoints.push(simple::endpoint(ctx, handler, partition.method));
+            } else {
+                let dispatcher = dispatcher::dispatcher(ctx, handlers, partition)?;
+
+                generated.extra.push(dispatcher.items);
+                endpoints.push(dispatcher.expr);
+            }
+        }
+
+        generated
+            .routes
+            .push(quote!(.route(#krate::router::Route::new(#pattern)? #(.endpoint(#endpoints))*)));
+    }
+
+    Ok(generated)
+}
+
+fn routes_fn(ctx: &Context, routes: &[TokenStream]) -> TokenStream {
+    let krate = ctx.krate;
+
+    quote! {
+        /// Builds the router of this controller from its route attributes.
+        pub fn routes(
+            self: ::std::sync::Arc<Self>,
+        ) -> ::std::result::Result<
+            #krate::router::Router<impl #krate::router::RouteList>,
+            #krate::router::PatternError,
+        > {
+            ::std::result::Result::Ok(#krate::router::Router::new() #(#routes)*)
+        }
+    }
 }
 
 fn collect(
     method: &mut ImplItemFn,
     args: &ControllerArgs,
-    endpoints: &mut Vec<Endpoint>,
-    wrappers: &mut Vec<TokenStream>,
+    handlers: &mut Vec<Handler>,
+    variants: &mut Vec<Variant>,
 ) -> syn::Result<()> {
     let mut attrs = Vec::new();
     let mut routes = Vec::new();
@@ -70,19 +149,73 @@ fn collect(
 
     check_signature(method)?;
 
-    let handler = handler(method, &args.krate, wrappers);
+    let params = params(method);
+
+    allow_guard_only_params(method, &routes, &params)?;
+
+    handlers.push(Handler {
+        name: method.sig.ident.clone(),
+        receiver: matches!(method.sig.inputs.first(), Some(FnArg::Receiver(_))),
+        params,
+        output: method.sig.output.clone(),
+    });
 
     for route in routes {
-        endpoints.push(Endpoint {
+        variants.push(Variant {
+            handler: handlers.len() - 1,
             method: route.method,
             pattern: join(args.prefix.as_ref(), &route.path)?,
-            when: route.when,
+            guards: route.guards,
             when_text: route.when_text,
-            handler: handler.clone(),
         });
     }
 
     Ok(())
+}
+
+/// Marks the parameters that guards read with `#[allow(unused_variables)]`, so a parameter that
+/// exists only to feed a guard does not warn in the method that never touches it.
+fn allow_guard_only_params(
+    method: &mut ImplItemFn,
+    routes: &[RouteAttr],
+    params: &[Param],
+) -> syn::Result<()> {
+    let mut used = BTreeSet::new();
+
+    for guard in routes.iter().flat_map(|route| &route.guards) {
+        used.extend(analyze(guard, params)?.uses);
+    }
+
+    let typed = method.sig.inputs.iter_mut().filter_map(|arg| match arg {
+        FnArg::Typed(typed) => Some(typed),
+        FnArg::Receiver(_) => None,
+    });
+
+    for (index, param) in typed.enumerate() {
+        if used.contains(&index) {
+            param
+                .attrs
+                .push(syn::parse_quote!(#[allow(unused_variables)]));
+        }
+    }
+
+    Ok(())
+}
+
+fn params(method: &ImplItemFn) -> Vec<Param> {
+    method
+        .sig
+        .inputs
+        .iter()
+        .filter_map(|arg| match arg {
+            FnArg::Typed(typed) => Some(Param {
+                pat: (*typed.pat).clone(),
+                ty: (*typed.ty).clone(),
+                bindings: bindings(&typed.pat),
+            }),
+            FnArg::Receiver(_) => None,
+        })
+        .collect()
 }
 
 fn check_signature(method: &ImplItemFn) -> syn::Result<()> {
@@ -115,99 +248,6 @@ fn check_signature(method: &ImplItemFn) -> syn::Result<()> {
         }
         _ => Ok(()),
     }
-}
-
-fn has_receiver(method: &ImplItemFn) -> bool {
-    matches!(method.sig.inputs.first(), Some(FnArg::Receiver(_)))
-}
-
-fn handler(method: &ImplItemFn, krate: &Path, wrappers: &mut Vec<TokenStream>) -> TokenStream {
-    let name = &method.sig.ident;
-
-    if !has_receiver(method) {
-        return quote!(Self::#name);
-    }
-
-    let wrapper = format_ident!("__fast_http_{}", name);
-
-    if !wrappers
-        .iter()
-        .any(|existing| existing.to_string().contains(&wrapper.to_string()))
-    {
-        wrappers.push(wrapper_fn(method, &wrapper));
-    }
-
-    quote!(#krate::router::bind(::std::sync::Arc::clone(&self), Self::#wrapper))
-}
-
-fn wrapper_fn(method: &ImplItemFn, wrapper: &syn::Ident) -> TokenStream {
-    let name = &method.sig.ident;
-    let output = &method.sig.output;
-    let types: Vec<_> = method
-        .sig
-        .inputs
-        .iter()
-        .filter_map(|arg| match arg {
-            FnArg::Typed(typed) => Some(&*typed.ty),
-            FnArg::Receiver(_) => None,
-        })
-        .collect();
-    let names: Vec<_> = (0..types.len())
-        .map(|index| format_ident!("__a{index}"))
-        .collect();
-
-    quote! {
-        #[doc(hidden)]
-        #[allow(clippy::too_many_arguments)]
-        async fn #wrapper(this: ::std::sync::Arc<Self> #(, #names: #types)*) #output {
-            this.#name(#(#names),*).await
-        }
-    }
-}
-
-fn routes_fn(krate: &Path, groups: &[Group]) -> TokenStream {
-    let routes = groups.iter().map(|group| {
-        let pattern: &LitStr = &group.pattern;
-        let endpoints = group
-            .endpoints
-            .iter()
-            .map(|endpoint| endpoint_expr(krate, endpoint));
-
-        quote!(.route(#krate::router::Route::new(#pattern)? #(.endpoint(#endpoints))*))
-    });
-
-    quote! {
-        /// Builds the router of this controller from its route attributes.
-        pub fn routes(
-            self: ::std::sync::Arc<Self>,
-        ) -> ::std::result::Result<
-            #krate::router::Router<impl #krate::router::RouteList>,
-            #krate::router::PatternError,
-        > {
-            ::std::result::Result::Ok(#krate::router::Router::new() #(#routes)*)
-        }
-    }
-}
-
-fn endpoint_expr(krate: &Path, endpoint: &Endpoint) -> TokenStream {
-    let constructor = format_ident!("{}", HttpMethod::name(endpoint.method));
-    let handler = &endpoint.handler;
-    let guard = guard(krate, &endpoint.when);
-
-    quote!(#krate::router::#constructor(#handler) #guard)
-}
-
-fn guard(krate: &Path, when: &[Condition]) -> TokenStream {
-    if when.is_empty() {
-        return TokenStream::new();
-    }
-
-    let conditions: Vec<_> = when
-        .iter()
-        .map(|condition| condition.expression(krate))
-        .collect();
-
-    quote!(.guard(|parts| true #(&& #conditions)*))
 }
 
 #[cfg(test)]

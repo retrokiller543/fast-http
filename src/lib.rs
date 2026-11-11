@@ -8,7 +8,8 @@
 //! - `tower` adds [`layer::TowerFlow`];
 //! - `tls` adds rustls support to the [`server`] transports;
 //! - `ws` adds [`ws`] and `multipart` adds [`multipart`];
-//! - `macros` adds the [`controller`] attribute;
+//! - `macros` adds the [`controller`] attribute, whose `when(..)` guards are plain Rust over the
+//!   method's own parameters;
 //! - `full` turns all of them on.
 //!
 //! The `routes` example builds routes by hand and the `controller` example uses [`controller`];

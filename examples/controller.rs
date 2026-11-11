@@ -1,47 +1,42 @@
-//! A controller with header guards, mixed with a bare route that has a body guard. Run it with
-//! `cargo run --example controller --features macros`, then:
+//! Controllers with typed guards. Run it with `cargo run --example controller --features macros`,
+//! then:
 //!
 //! ```sh
 //! curl http://127.0.0.1:3000/items
 //! curl -H 'x-staff: 1' http://127.0.0.1:3000/items
+//! curl 'http://127.0.0.1:3000/items/search?sort=name'
 //! curl http://127.0.0.1:3000/items/7
 //! curl -H 'x-api-version: 2' http://127.0.0.1:3000/items/7
 //! curl -H 'content-type: application/json' -d '{"item":7,"express":true}' http://127.0.0.1:3000/orders
 //! curl -H 'content-type: application/json' -d '{"item":7,"express":false}' http://127.0.0.1:3000/orders
 //! ```
 //!
-//! `when(..)` covers the request head: headers, query parameters and `HeadGuard` types. It has
-//! no body guards yet, so a route that needs one is a bare route, which merges into the same
-//! router.
+//! A guard in `when(..)` is an ordinary Rust expression over the method's own parameters, so the
+//! editor highlights and checks it like any other code. Parameters are borrowed in a guard:
+//! `headers` is a `&HeaderMap`, `order` a `&Order`.
+//!
+//! Work happens only when it is needed and at most once. Within a variant the arguments a guard
+//! reads are extracted first, so a header check runs before any body is parsed, and when several
+//! variants take the same argument type it is extracted once and moved into whichever variant
+//! wins. Variants are tried in order, so put cheap and specific guards first and the unguarded
+//! default last.
 
 use std::{net::SocketAddr, sync::Arc};
 
-use bytes::Bytes;
 use fast_http::{
     controller,
-    core::{HeadGuard, Path, guard::header_has},
+    core::{Path, QueryParams},
     format::{Body, Negotiated},
-    router::{PatternError, Route, RouteList, Router, post},
+    router::{PatternError, RouteList, Router},
     server::Server,
     transport::Tcp,
 };
-use http::{StatusCode, request::Parts};
+use http::{HeaderMap, StatusCode};
 use serde::{Deserialize, Serialize};
 
-/// The state of the controller; handlers reach it through `&self`.
+/// The state of the items controller; handlers reach it through `&self`.
 struct Library {
     name: &'static str,
-}
-
-/// Requests that carry the `x-staff` header.
-struct Staff;
-
-impl HeadGuard for Staff {
-    type Output = ();
-
-    fn check(parts: &Parts) -> Option<()> {
-        header_has(parts, "x-staff").then_some(())
-    }
 }
 
 /// A listing of items.
@@ -61,8 +56,8 @@ struct Item {
 
 #[controller("/items")]
 impl Library {
-    #[get(when(guard(Staff)))]
-    async fn everything(&self) -> Negotiated<Listing> {
+    #[get(when(headers.contains_key("x-staff")))]
+    async fn everything(&self, headers: &HeaderMap) -> Negotiated<Listing> {
         Negotiated::new(Listing {
             library: self.name,
             scope: "all",
@@ -79,8 +74,26 @@ impl Library {
         })
     }
 
-    #[get("/{id}", when(header.x_api_version = "2"))]
-    async fn show_v2(&self, Path(id): Path<u64>) -> Negotiated<Item> {
+    #[get("/search", when(query.get("sort") == Some("name")))]
+    async fn by_name(&self, query: QueryParams<'_>) -> Negotiated<Listing> {
+        Negotiated::new(Listing {
+            library: self.name,
+            scope: "by name",
+            items: (1..=10).rev().collect(),
+        })
+    }
+
+    #[get("/search")]
+    async fn by_id(&self) -> Negotiated<Listing> {
+        Negotiated::new(Listing {
+            library: self.name,
+            scope: "by id",
+            items: (1..=10).collect(),
+        })
+    }
+
+    #[get("/{id}", when(headers.get("x-api-version").is_some_and(|version| version == "2")))]
+    async fn show_v2(&self, Path(id): Path<u64>, headers: &HeaderMap) -> Negotiated<Item> {
         Negotiated::new(Item { id, version: "v2" })
     }
 
@@ -94,41 +107,38 @@ impl Library {
 #[derive(Deserialize)]
 struct Order {
     item: u64,
-}
-
-/// The part of an order the body guard reads.
-#[derive(Deserialize)]
-struct Priority {
     express: bool,
 }
 
-async fn express(body: Body<Order>) -> (StatusCode, String) {
-    (
-        StatusCode::ACCEPTED,
-        format!("express order for item {}", body.into_inner().item),
-    )
-}
+/// The orders controller.
+struct Orders;
 
-async fn standard(body: Body<Order>) -> (StatusCode, String) {
-    (
-        StatusCode::ACCEPTED,
-        format!("standard order for item {}", body.into_inner().item),
-    )
-}
+#[controller("/orders")]
+impl Orders {
+    #[post(when(order.express))]
+    async fn express(&self, Body { value: order, .. }: Body<Order>) -> (StatusCode, String) {
+        (
+            StatusCode::ACCEPTED,
+            format!("express order for item {}", order.item),
+        )
+    }
 
-fn is_express(_: &Parts, body: &Bytes) -> bool {
-    serde_json::from_slice::<Priority>(body).is_ok_and(|priority| priority.express)
+    #[post]
+    async fn standard(&self, order: Body<Order>) -> (StatusCode, String) {
+        (
+            StatusCode::ACCEPTED,
+            format!("standard order for item {}", order.value.item),
+        )
+    }
 }
 
 /// The router of the example.
 pub fn app() -> Result<Router<impl RouteList>, PatternError> {
     let library = Arc::new(Library { name: "city" });
 
-    Ok(Router::new().merge(library.routes()?).route(
-        Route::new("/orders")?
-            .endpoint(post(express).body_guard(is_express))
-            .endpoint(post(standard)),
-    ))
+    Ok(Router::new()
+        .merge(library.routes()?)
+        .merge(Arc::new(Orders).routes()?))
 }
 
 #[tokio::main]

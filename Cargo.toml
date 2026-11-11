@@ -109,3 +109,7 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal"] }
 [[example]]
 name = "controller"
 required-features = ["macros"]
+
+[[test]]
+name = "controller"
+required-features = ["macros", "form"]

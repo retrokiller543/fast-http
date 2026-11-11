@@ -122,6 +122,18 @@ async fn controller_staff_header_guard_lists_everything() {
 
 #[cfg(feature = "macros")]
 #[tokio::test]
+async fn controller_query_guard_selects_the_sort_order() {
+    let router = controller_example::app().expect("routes");
+
+    let named = send(&router, Method::GET, "/items/search?sort=name", &[], "").await;
+    let default = send(&router, Method::GET, "/items/search", &[], "").await;
+
+    assert!(named.1.contains(r#""scope":"by name""#));
+    assert!(default.1.contains(r#""scope":"by id""#));
+}
+
+#[cfg(feature = "macros")]
+#[tokio::test]
 async fn controller_header_guard_selects_the_version() {
     let router = controller_example::app().expect("routes");
 
@@ -141,7 +153,7 @@ async fn controller_header_guard_selects_the_version() {
 
 #[cfg(feature = "macros")]
 #[tokio::test]
-async fn controller_example_mixes_in_a_body_guarded_bare_route() {
+async fn controller_body_guard_reads_the_typed_body() {
     let router = controller_example::app().expect("routes");
 
     let express = send(
@@ -163,4 +175,14 @@ async fn controller_example_mixes_in_a_body_guarded_bare_route() {
 
     assert_eq!(express.1, "express order for item 7");
     assert_eq!(standard.1, "standard order for item 7");
+}
+
+#[cfg(feature = "macros")]
+#[tokio::test]
+async fn controller_body_that_does_not_parse_is_a_client_error() {
+    let router = controller_example::app().expect("routes");
+
+    let (status, _) = send(&router, Method::POST, "/orders", &[JSON], "not json").await;
+
+    assert!(status.is_client_error());
 }

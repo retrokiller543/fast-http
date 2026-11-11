@@ -1,10 +1,8 @@
 use proc_macro2::{Span, TokenStream};
 use syn::{
-    Attribute, Ident, LitStr, Meta, Token, parenthesized, parse::ParseStream,
+    Attribute, Expr, Ident, LitStr, Meta, Token, parenthesized, parse::ParseStream,
     punctuated::Punctuated,
 };
-
-use crate::when::Condition;
 
 /// The HTTP methods a route attribute can name.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -43,6 +41,17 @@ impl HttpMethod {
             Self::Delete => "delete",
         }
     }
+
+    /// The name of the matching associated constant of `http::Method`.
+    pub fn constant(self) -> &'static str {
+        match self {
+            Self::Get => "GET",
+            Self::Post => "POST",
+            Self::Put => "PUT",
+            Self::Patch => "PATCH",
+            Self::Delete => "DELETE",
+        }
+    }
 }
 
 /// A parsed `#[get("/path", when(..))]` style attribute.
@@ -51,9 +60,9 @@ pub struct RouteAttr {
     pub method: HttpMethod,
     /// The path relative to the controller prefix; empty when omitted.
     pub path: LitStr,
-    /// Conditions on the request head, all of which must hold.
-    pub when: Vec<Condition>,
-    /// The attribute's `when` clause as written, for spotting duplicates.
+    /// Boolean expressions over the method's parameters, all of which must hold.
+    pub guards: Vec<Expr>,
+    /// The `when` clause as written, for spotting duplicates.
     pub when_text: String,
 }
 
@@ -81,7 +90,7 @@ impl RouteAttr {
         Self {
             method,
             path: LitStr::new("", Span::call_site()),
-            when: Vec::new(),
+            guards: Vec::new(),
             when_text: String::new(),
         }
     }
@@ -98,7 +107,7 @@ impl RouteAttr {
         } else {
             LitStr::new("", Span::call_site())
         };
-        let mut when = Vec::new();
+        let mut guards = Vec::new();
         let mut when_text = String::new();
 
         if !input.is_empty() {
@@ -112,9 +121,16 @@ impl RouteAttr {
 
             parenthesized!(content in input);
             when_text = content.fork().parse::<TokenStream>()?.to_string();
-            when = Punctuated::<Condition, Token![,]>::parse_terminated(&content)?
+            guards = Punctuated::<Expr, Token![,]>::parse_terminated(&content)?
                 .into_iter()
                 .collect();
+
+            if guards.is_empty() {
+                return Err(syn::Error::new_spanned(
+                    keyword,
+                    "`when(..)` needs a condition",
+                ));
+            }
         }
 
         if !input.is_empty() {
@@ -124,7 +140,7 @@ impl RouteAttr {
         Ok(Self {
             method,
             path,
-            when,
+            guards,
             when_text,
         })
     }
