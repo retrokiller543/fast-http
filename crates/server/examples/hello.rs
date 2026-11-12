@@ -11,17 +11,19 @@
 //! Serves plain HTTP/1.1 and prior-knowledge h2 on port 3000, as behind a TLS-terminating
 //! proxy. Ctrl-C drains in-flight requests and exits.
 
-use std::borrow::Cow;
-use std::fmt::{Display, Formatter};
-use std::net::SocketAddr;
-use http::request::Parts;
-use fast_http_core::{ErrorHandler, ErrorResponse, HandlerError, IntoResponse, Path, PeerAddr, Response, ResponseBody};
+use fast_http_core::{
+    ErrorHandler, ErrorResponse, HandlerError, IntoResponse, Path, PeerAddr, Response, ResponseBody,
+};
 use fast_http_format::{Body, Negotiated};
 use fast_http_router::{Route, Router};
 use fast_http_server::Server;
 use fast_http_transport::Tcp;
 use http::StatusCode;
+use http::request::Parts;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
+use std::fmt::{Display, Formatter};
+use std::net::SocketAddr;
 use type_match::type_match;
 
 /// A user as returned.
@@ -81,7 +83,7 @@ async fn create(body: Body<NewUser>) -> Negotiated<User> {
 
 #[derive(Debug)]
 struct TestError {
-    test_error: Cow<'static, str>
+    test_error: Cow<'static, str>,
 }
 
 impl Display for TestError {
@@ -94,18 +96,14 @@ impl std::error::Error for TestError {}
 
 impl IntoResponse for TestError {
     fn into_response(self) -> Response {
-        let response = Response::builder()
+        Response::builder()
             .status(self.status())
             .header("content-type", "application/json")
             .header("x-error", self.test_error.to_string())
-            .body(ResponseBody::from(format!(
-                r#"{{
-                "test_error": "{}"
-                }}"#
-            , self.test_error)))
-            .unwrap();
-
-        response
+            .body(ResponseBody::from(
+                serde_json::json!({ "test_error": self.test_error }).to_string(),
+            ))
+            .unwrap()
     }
 }
 
@@ -116,7 +114,9 @@ impl ErrorResponse for TestError {
 }
 
 async fn test(Path(name): Path<&str>) -> Result<Negotiated<User>, TestError> {
-    Err(TestError { test_error: Cow::from(name.to_string()) })
+    Err(TestError {
+        test_error: Cow::from(name.to_string()),
+    })
 }
 
 async fn peer(PeerAddr(addr): PeerAddr) -> String {

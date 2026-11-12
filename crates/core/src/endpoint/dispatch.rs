@@ -3,7 +3,8 @@ use http::{StatusCode, request::Parts};
 use http_body_util::Full;
 
 use crate::{
-    EndpointSet, ErrorHandler, HandlerError, PathParams, ReqBody, Response, Selection, body::buffer,
+    DEFAULT_BODY_LIMIT, EndpointSet, ErrorHandler, HandlerError, PathParams, ReqBody, Response,
+    Selection, body::buffer,
 };
 
 /// Limits and fallbacks applied while dispatching to an [`EndpointSet`].
@@ -19,7 +20,7 @@ pub struct DispatchOptions {
 impl Default for DispatchOptions {
     fn default() -> Self {
         Self {
-            body_limit: 2 * 1024 * 1024,
+            body_limit: DEFAULT_BODY_LIMIT,
             guard_miss: StatusCode::BAD_REQUEST,
         }
     }

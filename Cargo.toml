@@ -37,6 +37,9 @@ rmp-serde = "1.3.1"
 quick-xml = { version = "0.42.0", features = ["serialize"] }
 toml = "1.2.1"
 futures-core = "0.3.34"
+futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
+multer = { version = "3.1.0", default-features = false }
+tokio-tungstenite = { version = "0.29.0", default-features = false, features = ["handshake"] }
 criterion = "0.8.2"
 bench_metrics = { package = "mhr-bench-metrics", version = "0.1" }
 tower = { version = "0.5.3", features = ["util"] }
@@ -47,9 +50,11 @@ fast-http-bench-support = { path = "crates/bench-support" }
 fast-http-core = { path = "crates/core" }
 fast-http-format = { path = "crates/format", default-features = false }
 fast-http-layer = { path = "crates/layer" }
+fast-http-multipart = { path = "crates/multipart" }
 fast-http-router = { path = "crates/router" }
 fast-http-server = { path = "crates/server" }
 fast-http-transport = { path = "crates/transport" }
+fast-http-ws = { path = "crates/ws" }
 
 [package]
 name = "fast-http"
@@ -61,4 +66,28 @@ repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[features]
+default = ["json"]
+full = ["json", "form", "yaml", "toml", "cbor", "msgpack", "xml", "problem", "tower", "tls", "ws", "multipart"]
+json = ["fast-http-format/json"]
+form = ["fast-http-format/form"]
+yaml = ["fast-http-format/yaml"]
+toml = ["fast-http-format/toml"]
+cbor = ["fast-http-format/cbor"]
+msgpack = ["fast-http-format/msgpack"]
+xml = ["fast-http-format/xml"]
+problem = ["fast-http-format/problem"]
+tower = ["fast-http-layer/tower"]
+tls = ["fast-http-server/tls"]
+ws = ["dep:fast-http-ws"]
+multipart = ["dep:fast-http-multipart"]
+
 [dependencies]
+fast-http-core.workspace = true
+fast-http-format.workspace = true
+fast-http-layer.workspace = true
+fast-http-router.workspace = true
+fast-http-server.workspace = true
+fast-http-transport.workspace = true
+fast-http-multipart = { workspace = true, optional = true }
+fast-http-ws = { workspace = true, optional = true }

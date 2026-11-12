@@ -1,0 +1,32 @@
+[package]
+name = "fast-http-ws"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "WebSocket upgrades over hyper for fast-http."
+
+[dependencies]
+bytes.workspace = true
+fast-http-core.workspace = true
+futures-util.workspace = true
+http.workspace = true
+hyper = { workspace = true, features = ["http1", "server"] }
+hyper-util = { workspace = true, features = ["tokio"] }
+thiserror.workspace = true
+tokio = { workspace = true, features = ["io-util", "rt", "time"] }
+tokio-tungstenite.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+bytes.workspace = true
+fast-http-router.workspace = true
+fast-http-server.workspace = true
+fast-http-transport.workspace = true
+futures-util.workspace = true
+http-body-util.workspace = true
+hyper = { workspace = true, features = ["client", "http1"] }
+tokio = { workspace = true, features = ["io-util", "macros", "rt", "sync", "test-util", "time"] }

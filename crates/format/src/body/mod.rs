@@ -5,8 +5,8 @@ use http::{header::CONTENT_TYPE, request::Parts};
 
 use crate::{DecodeSet, Enabled, FormatError};
 
-/// Default request body limit, 2 MiB.
-pub const DEFAULT_BODY_LIMIT: usize = 2 * 1024 * 1024;
+/// Default request body limit, 8 MiB.
+pub const DEFAULT_BODY_LIMIT: usize = fast_http_core::DEFAULT_BODY_LIMIT;
 
 /// Request value decoded by the format of `S` that matches `Content-Type`, buffering at most `LIMIT` bytes.
 ///

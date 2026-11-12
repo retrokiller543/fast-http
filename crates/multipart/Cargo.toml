@@ -1,0 +1,23 @@
+[package]
+name = "fast-http-multipart"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Streaming multipart/form-data extraction for fast-http."
+
+[dependencies]
+bytes.workspace = true
+fast-http-core.workspace = true
+futures-util.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+multer.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+fast-http-router.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }
