@@ -1,4 +1,5 @@
 use std::{
+    io,
     pin::Pin,
     task::{Context, Poll, ready},
     time::Duration,
@@ -45,7 +46,7 @@ pub struct WebSocket<S = TokioIo<Upgraded>> {
     inner: WebSocketStream<S>,
     protocol: Option<HeaderValue>,
     permit: Option<Permit>,
-    reset: bool,
+    failed: Option<tungstenite::Error>,
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> WebSocket<S> {
@@ -55,7 +56,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> WebSocket<S> {
             inner: WebSocketStream::from_raw_socket(io, Role::Server, Some(config)).await,
             protocol,
             permit: None,
-            reset: false,
+            failed: None,
         }
     }
 
@@ -113,17 +114,20 @@ impl<S: AsyncRead + AsyncWrite + Unpin> WebSocket<S> {
     ///
     /// When a close is already under way there is nothing to send: a frame queued earlier, such
     /// as by a cancelled [`SinkExt::close`] or the reply to the peer's close, is flushed instead.
-    /// A connection that already ended is success when it ended with a close handshake, and the
-    /// reset it ended with otherwise.
+    /// A connection that already ended is success when it ended with a close handshake.
+    ///
+    /// When an earlier read failed, the stream has ended and no reply can be read: the close
+    /// frame is still sent when the connection allows it, and the read error is returned.
     async fn close_handshake(mut self, frame: Option<CloseFrame>) -> Result<(), Error> {
         let handshake = async {
-            match self.inner.send(Message::Close(frame).into_raw()).await {
+            let sent = self.inner.send(Message::Close(frame).into_raw()).await;
+
+            if let Some(error) = self.failed.take() {
+                return Err(Error(error));
+            }
+
+            match sent {
                 Ok(()) | Err(tungstenite::Error::ConnectionClosed) => {}
-                Err(tungstenite::Error::AlreadyClosed) if self.reset => {
-                    return Err(Error(tungstenite::Error::Protocol(
-                        ProtocolError::ResetWithoutClosingHandshake,
-                    )));
-                }
                 Err(tungstenite::Error::AlreadyClosed) => return Ok(()),
                 Err(tungstenite::Error::Protocol(ProtocolError::SendAfterClosing)) => {
                     self.inner.flush().await.map_err(Error)?;
@@ -157,10 +161,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Stream for WebSocket<S> {
             match ready!(self.inner.poll_next_unpin(cx)) {
                 None => return Poll::Ready(None),
                 Some(Err(error)) => {
-                    self.reset |= matches!(
-                        error,
-                        tungstenite::Error::Protocol(ProtocolError::ResetWithoutClosingHandshake)
-                    );
+                    if self.failed.is_none() {
+                        self.failed = Some(duplicate(&error));
+                    }
 
                     return Poll::Ready(Some(Err(Error(error))));
                 }
@@ -193,6 +196,27 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Sink<Message> for WebSocket<S> {
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
         Pin::new(&mut self.inner).poll_close(cx).map_err(Error)
+    }
+}
+
+/// A copy of a read error, which `tungstenite::Error` cannot be cloned for, so
+/// [`WebSocket::close`] can report how the stream ended after the original went to the reader.
+///
+/// The variants reads produce are copied exactly, an I/O error with its kind and message. The
+/// others, such as TLS or URL errors, only arise while connecting and become an I/O error with
+/// their message.
+fn duplicate(error: &tungstenite::Error) -> tungstenite::Error {
+    match error {
+        tungstenite::Error::ConnectionClosed => tungstenite::Error::ConnectionClosed,
+        tungstenite::Error::AlreadyClosed => tungstenite::Error::AlreadyClosed,
+        tungstenite::Error::AttackAttempt => tungstenite::Error::AttackAttempt,
+        tungstenite::Error::Protocol(error) => tungstenite::Error::Protocol(error.clone()),
+        tungstenite::Error::Capacity(error) => tungstenite::Error::Capacity(*error),
+        tungstenite::Error::Utf8(text) => tungstenite::Error::Utf8(text.clone()),
+        tungstenite::Error::Io(error) => {
+            tungstenite::Error::Io(io::Error::new(error.kind(), error.to_string()))
+        }
+        other => tungstenite::Error::Io(io::Error::other(other.to_string())),
     }
 }
 

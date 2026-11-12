@@ -216,3 +216,42 @@ async fn close_flushes_the_frame_of_a_cancelled_sink_close() {
 
     assert!(result.is_ok(), "{result:?}");
 }
+
+#[tokio::test]
+async fn close_after_a_protocol_error_reports_that_error() {
+    let (server, mut client) = duplex(4096);
+    let mut server = WebSocket::from_io(server, None, WebSocketConfig::default()).await;
+    let reserved_bit_set = [0xC1, 0x80, 0, 0, 0, 0];
+
+    tokio::io::AsyncWriteExt::write_all(&mut client, &reserved_bit_set)
+        .await
+        .expect("raw frame is written");
+
+    let read = server.recv().await.expect("the protocol error is reported");
+
+    assert!(read.is_err());
+
+    let result = server.close().await.map_err(Error::into_inner);
+
+    assert!(
+        matches!(
+            result,
+            Err(tungstenite::Error::Protocol(
+                ProtocolError::NonZeroReservedBits
+            ))
+        ),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn duplicate_keeps_the_kind_and_message_of_an_io_error() {
+    let original = tungstenite::Error::Io(io::Error::new(io::ErrorKind::BrokenPipe, "gone"));
+
+    let copy = duplicate(&original);
+
+    assert!(
+        matches!(&copy, tungstenite::Error::Io(error) if error.kind() == io::ErrorKind::BrokenPipe && error.to_string() == "gone"),
+        "{copy:?}"
+    );
+}
