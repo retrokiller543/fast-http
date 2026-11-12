@@ -138,6 +138,19 @@ impl<T: IntoResponse> IntoOutcome for T {
     }
 }
 
+/// Answers with `T`'s response under another status; `T` may be anything that renders, such as a
+/// format wrapper whose encoding can fail.
+impl<T: IntoOutcome> IntoOutcome for (StatusCode, T) {
+    fn into_outcome(self, parts: &Parts) -> Outcome {
+        let (status, inner) = self;
+        let mut response = inner.into_outcome(parts)?;
+
+        *response.status_mut() = status;
+
+        Ok(response)
+    }
+}
+
 impl<T: IntoOutcome, E: Into<HandlerError>> IntoOutcome for Result<T, E> {
     fn into_outcome(self, parts: &Parts) -> Outcome {
         match self {

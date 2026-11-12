@@ -1,5 +1,6 @@
 use std::{
     pin::pin,
+    sync::atomic::{AtomicUsize, Ordering},
     task::{Context, Poll, Waker},
 };
 
@@ -7,7 +8,7 @@ use http::{Request as HttpRequest, StatusCode};
 use http_body_util::Full;
 
 use super::*;
-use crate::{DefaultErrorHandler, ResponseBody};
+use crate::{DEFAULT_BODY_LIMIT, DefaultErrorHandler, ResponseBody};
 
 /// Test endpoint answering with a fixed status.
 struct Fixed {
@@ -16,6 +17,7 @@ struct Fixed {
     head_ok: bool,
     body_needle: Option<&'static [u8]>,
     status: StatusCode,
+    head_calls: AtomicUsize,
 }
 
 impl Fixed {
@@ -26,6 +28,7 @@ impl Fixed {
             head_ok: true,
             body_needle: None,
             status,
+            head_calls: AtomicUsize::new(0),
         }
     }
 }
@@ -40,6 +43,8 @@ impl Endpoint for Fixed {
     }
 
     fn head_guard(&self, _: &Parts) -> bool {
+        self.head_calls.fetch_add(1, Ordering::Relaxed);
+
         self.head_ok
     }
 
@@ -74,6 +79,15 @@ fn parts(method: Method) -> Parts {
 }
 
 fn run<S: EndpointSet>(set: &S, method: Method, body: &'static [u8]) -> Response {
+    run_with(set, method, body, DispatchOptions::default())
+}
+
+fn run_with<S: EndpointSet>(
+    set: &S,
+    method: Method,
+    body: &'static [u8],
+    options: DispatchOptions,
+) -> Response {
     let mut cx = Context::from_waker(Waker::noop());
     let parts = parts(method);
     let future = dispatch_set(
@@ -82,7 +96,7 @@ fn run<S: EndpointSet>(set: &S, method: Method, body: &'static [u8]) -> Response
         PathParams::EMPTY,
         Full::new(Bytes::from_static(body)),
         &DefaultErrorHandler,
-        DispatchOptions::default(),
+        options,
     );
 
     match pin!(future).poll(&mut cx) {
@@ -151,4 +165,195 @@ fn dispatch_set_body_guard_selects_by_buffered_body() {
         StatusCode::CREATED
     );
     assert_eq!(run(&set, Method::POST, b"plain").status(), StatusCode::OK);
+}
+
+/// Test endpoint that turns every request down without reading its body.
+struct Declining(Method);
+
+impl Endpoint for Declining {
+    fn method(&self) -> &Method {
+        &self.0
+    }
+
+    async fn call<B: ReqBody, H: ErrorHandler>(
+        &self,
+        _: &Parts,
+        _: PathParams<'_>,
+        _: B,
+        _: &H,
+    ) -> Response {
+        unreachable!("a declining endpoint is only attempted")
+    }
+
+    async fn attempt<B: ReqBody, H: ErrorHandler>(
+        &self,
+        _: &Parts,
+        _: PathParams<'_>,
+        body: B,
+        _: &H,
+    ) -> Attempt<B> {
+        Attempt::Declined(body)
+    }
+}
+
+#[test]
+fn dispatch_set_declined_request_goes_to_the_next_endpoint() {
+    let set = (
+        Declining(Method::GET),
+        Fixed::new(Method::GET, StatusCode::ACCEPTED),
+    );
+
+    let response = run(&set, Method::GET, b"");
+
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+}
+
+#[test]
+fn dispatch_set_declined_by_every_endpoint_returns_guard_miss_status() {
+    let set = (Declining(Method::GET), Declining(Method::GET));
+
+    let response = run(&set, Method::GET, b"");
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+/// Test endpoint whose guard reads the body, like a generated endpoint guarding on a body
+/// extractor: it takes the request when the body contains `needle`.
+struct Reading {
+    needle: &'static [u8],
+    status: StatusCode,
+}
+
+impl Endpoint for Reading {
+    fn method(&self) -> &Method {
+        &Method::POST
+    }
+
+    fn guards_read_body(&self) -> bool {
+        true
+    }
+
+    async fn call<B: ReqBody, H: ErrorHandler>(
+        &self,
+        _: &Parts,
+        _: PathParams<'_>,
+        _: B,
+        _: &H,
+    ) -> Response {
+        unreachable!("a reading endpoint is only attempted")
+    }
+
+    async fn attempt<B: ReqBody, H: ErrorHandler>(
+        &self,
+        _: &Parts,
+        _: PathParams<'_>,
+        body: B,
+        _: &H,
+    ) -> Attempt<B> {
+        let bytes = crate::body::buffer(body, DEFAULT_BODY_LIMIT)
+            .await
+            .expect("the test body fits the limit");
+
+        if !bytes
+            .windows(self.needle.len())
+            .any(|window| window == self.needle)
+        {
+            return Attempt::Missed;
+        }
+
+        let mut response = Response::new(ResponseBody::Empty);
+
+        *response.status_mut() = self.status;
+
+        Attempt::Done(response)
+    }
+}
+
+#[test]
+fn dispatch_set_body_guard_after_a_decline_buffers_the_body() {
+    let mut matching = Fixed::new(Method::POST, StatusCode::CREATED);
+
+    matching.phase = GuardPhase::Body;
+    matching.body_needle = Some(b"magic");
+
+    let set = (Declining(Method::POST), matching);
+
+    let response = run(&set, Method::POST, b"a magic body");
+
+    assert_eq!(response.status(), StatusCode::CREATED);
+}
+
+#[test]
+fn dispatch_set_missed_body_guard_replays_the_body_to_the_next_endpoint() {
+    let set = (
+        Reading {
+            needle: b"express",
+            status: StatusCode::CREATED,
+        },
+        Reading {
+            needle: b"order",
+            status: StatusCode::OK,
+        },
+    );
+
+    assert_eq!(
+        run(&set, Method::POST, b"express order").status(),
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        run(&set, Method::POST, b"standard order").status(),
+        StatusCode::OK
+    );
+}
+
+#[test]
+fn dispatch_set_last_missed_body_guard_answers_with_the_configured_status() {
+    let set = (Reading {
+        needle: b"express",
+        status: StatusCode::CREATED,
+    },);
+    let options = DispatchOptions {
+        guard_miss: StatusCode::UNPROCESSABLE_ENTITY,
+        ..DispatchOptions::default()
+    };
+
+    let response = run_with(&set, Method::POST, b"standard order", options);
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[test]
+fn dispatch_set_runs_a_body_guarded_endpoints_head_guard_once() {
+    let mut matching = Fixed::new(Method::POST, StatusCode::CREATED);
+
+    matching.phase = GuardPhase::Body;
+    matching.body_needle = Some(b"magic");
+
+    let set = (matching,);
+
+    let response = run(&set, Method::POST, b"a magic body");
+
+    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(set.0.head_calls.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn dispatch_set_runs_a_later_guard_only_when_its_endpoint_is_tried() {
+    let set = (
+        Reading {
+            needle: b"express",
+            status: StatusCode::CREATED,
+        },
+        Fixed::new(Method::POST, StatusCode::OK),
+    );
+
+    let express = run(&set, Method::POST, b"express order");
+
+    assert_eq!(express.status(), StatusCode::CREATED);
+    assert_eq!(set.1.head_calls.load(Ordering::Relaxed), 0);
+
+    let standard = run(&set, Method::POST, b"standard order");
+
+    assert_eq!(standard.status(), StatusCode::OK);
+    assert_eq!(set.1.head_calls.load(Ordering::Relaxed), 1);
 }

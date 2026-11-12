@@ -228,6 +228,28 @@ pub trait FromParams {
     ) -> Result<Self::At<'r>, Self::Rejection>;
 }
 
+/// Extracts a value of the type the handler wrote, from a request borrowed for `'r`.
+///
+/// Where [`FromParams`] names the produced value through an associated type, which cannot say
+/// "this struct, with its lifetime replaced by `'r`", this trait is implemented for the value type
+/// itself, so a generated endpoint can ask for `Query<Params<'_>>` and let inference pick the
+/// request lifetime. Every [`FromParams`] extractor whose value is its own type qualifies.
+pub trait FromParamsAt<'r>: Sized + Send {
+    /// Error rendered as the response when extraction fails.
+    type Rejection: ErrorResponse;
+
+    /// Extracts from the head and the parameters.
+    fn from_params_at(parts: &'r Parts, params: &PathParams<'r>) -> Result<Self, Self::Rejection>;
+}
+
+impl<'r, T: FromParams<At<'r> = T> + Send> FromParamsAt<'r> for T {
+    type Rejection = T::Rejection;
+
+    fn from_params_at(parts: &'r Parts, params: &PathParams<'r>) -> Result<Self, Self::Rejection> {
+        T::from_params(parts, params)
+    }
+}
+
 impl<T: FromParts + Send> FromParams for T {
     type Rejection = T::Rejection;
     type At<'r> = T;

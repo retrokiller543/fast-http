@@ -1,9 +1,19 @@
 use bytes::Bytes;
-use fast_http_core::{BoxError, MediaType};
-use http::request::Parts;
+use fast_http_core::{
+    BoxError, FromRequest, IntoOutcome, MediaType, Outcome, ReqBody, Response, ResponseBody,
+};
+use http::{HeaderValue, header::CONTENT_TYPE, request::Parts};
 
-use crate::{Decode, Encode, Format, FormatError};
+use crate::{
+    Body, Decode, Encode, Format, FormatError,
+    wrapper::{Wrapper, transparent},
+};
 
+/// Defines one serde format as a single type with two roles.
+///
+/// Bare, as in `Body<T, (Json, Yaml)>`, it is the format marker of a set: `Json` is `Json<()>`.
+/// Wrapping a value, `Json<T>` is an extractor that accepts only that format and a response that
+/// is always that format, whatever the client's `Accept` says.
 macro_rules! serde_format {
     (
         $(#[$meta:meta])*
@@ -12,8 +22,33 @@ macro_rules! serde_format {
         |$input:ident| $decode:expr
     ) => {
         $(#[$meta])*
-        #[derive(Debug, Clone, Copy, Default)]
-        pub struct $name;
+        ///
+        /// Bare, it names the format in a set, such as `Body<T, (Self, ..)>`. Wrapping a value, it
+        /// is an extractor that accepts only this format and a response that is always this
+        /// format; the value is reached through `Deref` or the public field.
+        pub struct $name<T = ()>(pub T);
+
+        impl<T> Wrapper for $name<T> {
+            type Inner = T;
+
+            fn get(&self) -> &T {
+                &self.0
+            }
+
+            fn get_mut(&mut self) -> &mut T {
+                &mut self.0
+            }
+
+            fn unwrap(self) -> T {
+                self.0
+            }
+
+            fn wrap(value: T) -> Self {
+                Self(value)
+            }
+        }
+
+        transparent!(value $name [T] [T]);
 
         impl Format for $name {
             const MEDIA_TYPE: MediaType = MediaType::new($mime);
@@ -34,7 +69,39 @@ macro_rules! serde_format {
                 decoded.map_err(FormatError::Decode)
             }
         }
+
+        impl<T: serde::de::DeserializeOwned + Send> FromRequest for $name<T> {
+            type Rejection = FormatError;
+
+            async fn from_request<B: ReqBody>(
+                parts: &Parts,
+                body: B,
+            ) -> Result<Self, Self::Rejection> {
+                let body = Body::<T, ($name,)>::from_request(parts, body).await?;
+
+                Ok(Self(body.into_inner()))
+            }
+        }
+
+        impl<T: serde::Serialize> IntoOutcome for $name<T> {
+            fn into_outcome(self, parts: &Parts) -> Outcome {
+                encoded::<$name, T>(&self.0, parts)
+            }
+        }
     };
+}
+
+/// Answers with `value` encoded by `F`, labelled with `F`'s media type.
+fn encoded<F: Encode<T>, T>(value: &T, parts: &Parts) -> Outcome {
+    let bytes = F::encode(value, parts)?;
+    let mut response = Response::new(ResponseBody::Bytes(bytes));
+
+    response.headers_mut().insert(
+        CONTENT_TYPE,
+        HeaderValue::from_static(F::MEDIA_TYPE.essence()),
+    );
+
+    Ok(response)
 }
 
 #[cfg(feature = "json")]

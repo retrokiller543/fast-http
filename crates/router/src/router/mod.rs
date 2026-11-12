@@ -3,7 +3,7 @@ use fast_http_core::{
     PathParams, Rejection, ReqBody, Request, Response, Routes, Stack, flow,
 };
 
-use crate::{Append, ParamBuf, Pattern, Route, RouteList};
+use crate::{Append, IntoRoute, ParamBuf, Pattern, Route, RouteList};
 
 use self::index::Index;
 
@@ -41,21 +41,29 @@ impl Default for Router<()> {
 }
 
 impl<L: RouteList, H, F> Router<L, H, F> {
-    /// Appends `route`; routes are tried in the order they are added.
+    /// Appends `route`.
+    ///
+    /// Takes a [`Route`], or a function a route attribute turned into an endpoint, which becomes
+    /// the route at its own path. A request goes to the most specific route that matches, so
+    /// `/items/orders` wins over `/items/{id}` whatever order they are added in; equally specific
+    /// routes are tried in the order they are added.
     ///
     /// # Panics
     ///
-    /// When the router already holds `u32::MAX` routes.
-    pub fn route<S, G>(self, route: Route<S, G>) -> Router<L::Output, H, F>
+    /// When the router already holds `u32::MAX` routes, or when `route` matches exactly the paths
+    /// of a route added before it, such as `/a/{id}` after `/a/{key}`: the router never falls
+    /// through to a later route, so one of them could not be reached.
+    pub fn route<R: IntoRoute>(self, route: R) -> Router<L::Output, H, F>
     where
-        L: Append<Route<S, G>>,
+        L: Append<Route<R::Set, R::Flow>>,
     {
         let mut index = self.index;
+        let routes = self.routes.append(route.into_route());
 
-        index.push(route.pattern().first_literal(), L::LEN);
+        index.push(L::LEN, |position| routes.pattern(position));
 
         Router {
-            routes: self.routes.append(route),
+            routes,
             handler: self.handler,
             options: self.options,
             index,
@@ -76,22 +84,21 @@ impl<L: RouteList, H, F> Router<L, H, F> {
     ///
     /// # Panics
     ///
-    /// When the merged router would hold more than `u32::MAX` routes.
+    /// When the merged router would hold more than `u32::MAX` routes, or when a route of `group`
+    /// matches exactly the paths of a route already in this router.
     pub fn merge<M: RouteList>(self, group: Router<M>) -> Router<L::Output, H, F>
     where
         L: Append<M>,
     {
         let mut index = self.index;
+        let routes = self.routes.append(group.routes);
 
-        for position in 0..M::LEN {
-            index.push(
-                group.routes.pattern(position).first_literal(),
-                L::LEN + position,
-            );
+        for position in L::LEN..L::LEN + M::LEN {
+            index.push(position, |position| routes.pattern(position));
         }
 
         Router {
-            routes: self.routes.append(group.routes),
+            routes,
             handler: self.handler,
             options: self.options,
             index,

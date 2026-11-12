@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::{cmp::Ordering, collections::HashSet, fmt};
 
 /// Most path parameters one route can capture.
 pub const MAX_PARAMS: usize = 16;
@@ -137,6 +137,66 @@ impl Pattern {
         &self.names
     }
 
+    /// `base` followed by `path` as one pattern, such as a controller's path and a route under it.
+    ///
+    /// Each half must parse on its own. Together they must not repeat a parameter name, exceed
+    /// [`MAX_PARAMS`], or put anything after a `**` in `base`.
+    pub fn join(base: &'static str, path: &'static str) -> Result<Self, PatternError> {
+        let base_pattern = Self::parse(base)?;
+        let path_pattern = Self::parse(path)?;
+
+        if matches!(base_pattern.segments.last(), Some(Segment::Rest(_)))
+            && !path_pattern.segments.is_empty()
+        {
+            return Err(PatternError::WildcardNotLast(base));
+        }
+
+        if let Some(name) = path_pattern
+            .names
+            .iter()
+            .find(|name| base_pattern.names.contains(name))
+        {
+            return Err(PatternError::DuplicateParam(path, name));
+        }
+
+        if base_pattern.names.len() + path_pattern.names.len() > MAX_PARAMS {
+            return Err(PatternError::TooManyParams(path));
+        }
+
+        let Self {
+            mut segments,
+            mut names,
+        } = base_pattern;
+
+        segments.extend(path_pattern.segments);
+        names.extend(path_pattern.names);
+
+        Ok(Self { segments, names })
+    }
+
+    /// Orders patterns most specific first: segment by segment, a literal before `{param}`,
+    /// before `*`, before `**`.
+    pub fn cmp_specificity(&self, other: &Self) -> Ordering {
+        self.segments
+            .iter()
+            .map(Segment::rank)
+            .cmp(other.segments.iter().map(Segment::rank))
+    }
+
+    /// Whether both patterns match exactly the same paths, whatever their parameters are named;
+    /// `{param}` and `*` match the same single segment, so they count as the same.
+    pub fn same_shape(&self, other: &Self) -> bool {
+        self.segments.len() == other.segments.len()
+            && self
+                .segments
+                .iter()
+                .zip(&other.segments)
+                .all(|pair| match pair {
+                    (Segment::Literal(left), Segment::Literal(right)) => left == right,
+                    (left, right) => left.matched() == right.matched(),
+                })
+    }
+
     /// The literal first segment, when the pattern starts with one.
     pub fn first_literal(&self) -> Option<&'static str> {
         match self.segments.first() {
@@ -181,6 +241,53 @@ impl Pattern {
         }
 
         false
+    }
+}
+
+/// What a segment matches, regardless of whether it captures it.
+#[derive(PartialEq, Eq)]
+enum Matched {
+    Literal,
+    One,
+    Rest,
+}
+
+impl Segment {
+    fn matched(&self) -> Matched {
+        match self {
+            Self::Literal(_) => Matched::Literal,
+            Self::Param(_) | Self::Any => Matched::One,
+            Self::Rest(_) => Matched::Rest,
+        }
+    }
+
+    fn rank(&self) -> u8 {
+        match self {
+            Self::Literal(_) => 0,
+            Self::Param(_) => 1,
+            Self::Any => 2,
+            Self::Rest(_) => 3,
+        }
+    }
+}
+
+impl fmt::Display for Pattern {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.segments.is_empty() {
+            return f.write_str("/");
+        }
+
+        for segment in &self.segments {
+            match segment {
+                Segment::Literal(text) => write!(f, "/{text}")?,
+                Segment::Param(name) => write!(f, "/{{{name}}}")?,
+                Segment::Any => f.write_str("/*")?,
+                Segment::Rest(Some(name)) => write!(f, "/{{**{name}}}")?,
+                Segment::Rest(None) => f.write_str("/**")?,
+            }
+        }
+
+        Ok(())
     }
 }
 

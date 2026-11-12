@@ -304,14 +304,21 @@ dependencies = [
 name = "fast-http"
 version = "0.0.0"
 dependencies = [
+ "bytes",
  "fast-http-core",
  "fast-http-format",
  "fast-http-layer",
+ "fast-http-macros",
  "fast-http-multipart",
  "fast-http-router",
  "fast-http-server",
  "fast-http-transport",
  "fast-http-ws",
+ "http",
+ "http-body-util",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -377,6 +384,15 @@ dependencies = [
  "tower",
  "tower-layer",
  "tower-service",
+]
+
+[[package]]
+name = "fast-http-macros"
+version = "0.0.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]

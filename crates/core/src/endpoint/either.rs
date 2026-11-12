@@ -6,7 +6,7 @@ use pin_project_lite::pin_project;
 /// Defines an endpoint-call future enum of one arity: exactly one variant is live, and polling
 /// forwards to it.
 ///
-/// [`EndpointSet::call`](super::EndpointSet::call) returns the selected endpoint's future through
+/// [`EndpointSet::attempt`](super::EndpointSet::attempt) returns the selected endpoint's future through
 /// one of these instead of awaiting inside an `async fn`, so the caller's state machine gains only
 /// the chosen future and a discriminant rather than another nested frame.
 macro_rules! endpoint_future {

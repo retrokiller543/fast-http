@@ -12,7 +12,7 @@ let router = Router::new()
     .route(Route::new("/users")?.post(create));
 ```
 
-Routes and endpoints are tried in the order they are added. `Route::endpoint(e)` adds any `Endpoint`, such as a guarded `get(handler).guard(..)`.
+A request goes to the most specific route that matches (a literal segment before `{param}`, before `*`, before `**`), and equally specific routes are tried in the order they are added; adding a route that matches exactly the paths of an earlier one panics, since one of them could never be reached. Endpoints of a route are tried in the order they are added. `Router::route` also takes a function marked with a route attribute, `endpoints![a, b]` makes one route of several such functions at the same path, and `Route::under(base, path)` joins a controller's path in front of a route's. `Route::endpoint(e)` adds any `Endpoint`, such as a guarded `get(handler).guard(..)`.
 
 For large tables, build routes in groups (one function per controller, say) and join them with `Router::merge`:
 
@@ -31,6 +31,8 @@ Handlers are plain `async fn`s. Arguments are extractors (`Path<T>`, `Method`, `
 Patterns: `/users/{id}` captures one segment, `*` matches one segment without capturing, `**` matches the remaining segments, and `{**name}` captures them (read as the borrowed `Segments<'_>` or via `PathParams::segments`).
 
 Handlers are plain `async fn`s and may borrow from the request: `Path<(&str, u64)>`, `Path<Segments<'_>>`, `Path<BTreeMap<&str, &str>>`, `&Parts`, `&HeaderMap`, `&Method`, `&Uri` and `&Extensions` all extract without allocating.
+
+`bind(state, handler)` passes cloned state as the handler's first argument, so shared state is explicit and there is no registry. `FnEndpoint::guard` selects an endpoint on the request head and `FnEndpoint::body_guard` on the buffered body, which the handler then receives unchanged. `fast_http_router::dispatch` holds the runtime support for the endpoints `#[controller]` generates.
 
 Run `cargo run -p fast-http-router --example users` for a mocked-request walkthrough.
 

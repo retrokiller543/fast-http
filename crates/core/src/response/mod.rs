@@ -45,9 +45,9 @@ impl IntoResponse for StatusCode {
     }
 }
 
-impl IntoResponse for &'static str {
+impl IntoResponse for &str {
     fn into_response(self) -> Response {
-        ResponseBody::from(self).into_response()
+        ResponseBody::from(Bytes::copy_from_slice(self.as_bytes())).into_response()
     }
 }
 
@@ -68,17 +68,3 @@ impl IntoResponse for Vec<u8> {
         ResponseBody::from(self).into_response()
     }
 }
-
-impl<T: IntoResponse> IntoResponse for (StatusCode, T) {
-    fn into_response(self) -> Response {
-        let (status, inner) = self;
-        let mut response = inner.into_response();
-
-        *response.status_mut() = status;
-
-        response
-    }
-}
-
-#[cfg(test)]
-mod tests;

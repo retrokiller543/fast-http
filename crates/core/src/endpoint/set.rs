@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use http::{Method, request::Parts};
 
-use crate::{Endpoint, ErrorHandler, GuardPhase, PathParams, Rejection, ReqBody, Response};
+use crate::{Attempt, Endpoint, ErrorHandler, GuardPhase, PathParams, Rejection, ReqBody};
 
 use super::either::{
     EndpointFuture1, EndpointFuture2, EndpointFuture3, EndpointFuture4, EndpointFuture5,
@@ -15,26 +15,39 @@ use super::either::{
 pub enum Selection {
     /// The endpoint at this index handles the request.
     Selected(usize),
-    /// A body-phase endpoint is next in line, so the body must be buffered and selection repeated.
-    NeedBody,
+    /// The body-phase endpoint at this index passed its head guard, so the body must be buffered
+    /// and selection resumed there with [`EndpointSet::resume`].
+    NeedBody(usize),
     /// No endpoint applies.
     Rejected(Rejection),
 }
 
 /// The endpoints sharing one path, tried in order. Implemented for `()` and tuples of up to 16 endpoints.
 pub trait EndpointSet: Send + Sync + 'static {
-    /// Chooses an endpoint from the head, and from the body once it is available.
-    fn select(&self, parts: &Parts, body: Option<&Bytes>) -> Selection;
+    /// Chooses an endpoint from `from` on, using the head, and the body once it is available.
+    fn select(&self, from: usize, parts: &Parts, body: Option<&Bytes>) -> Selection;
 
-    /// Calls the endpoint at `index`, which must come from [`EndpointSet::select`].
-    fn call<'r, B: ReqBody, H: ErrorHandler>(
+    /// Continues a selection that stopped at `index` with [`Selection::NeedBody`], now that the
+    /// body is buffered: runs that endpoint's body guard, then selects from the next endpoint on.
+    /// The endpoint's head guard, which already passed, is not run again.
+    fn resume(&self, index: usize, parts: &Parts, body: &Bytes) -> Selection;
+
+    /// [`Endpoint::guards_read_body`] of the endpoint at `index`.
+    fn guards_read_body(&self, index: usize) -> bool;
+
+    /// Whether an endpoint after `index` answers the request's method. No guard runs, so a guard
+    /// runs only when its endpoint is actually tried.
+    fn answers_after(&self, index: usize, parts: &Parts) -> bool;
+
+    /// Offers the request to the endpoint at `index`, which must come from [`EndpointSet::select`].
+    fn attempt<'r, B: ReqBody, H: ErrorHandler>(
         &'r self,
         index: usize,
         parts: &'r Parts,
         params: PathParams<'r>,
         body: B,
         handler: &'r H,
-    ) -> impl Future<Output = Response> + Send + use<'r, B, H, Self>;
+    ) -> impl Future<Output = Attempt<B>> + Send + use<'r, B, H, Self>;
 }
 
 fn method_applies(method: &Method, requested: &Method, head_alias: bool) -> bool {
@@ -61,7 +74,7 @@ fn consider<E: Endpoint>(
 
     match (endpoint.phase(), body) {
         (GuardPhase::Head, _) => Some(Selection::Selected(index)),
-        (GuardPhase::Body, None) => Some(Selection::NeedBody),
+        (GuardPhase::Body, None) => Some(Selection::NeedBody(index)),
         (GuardPhase::Body, Some(body)) => endpoint
             .body_guard(parts, body)
             .then_some(Selection::Selected(index)),
@@ -98,18 +111,30 @@ fn rejection(method_seen: bool, methods: &[&Method], miss: http::StatusCode) -> 
 }
 
 impl EndpointSet for () {
-    fn select(&self, _: &Parts, _: Option<&Bytes>) -> Selection {
+    fn select(&self, _: usize, _: &Parts, _: Option<&Bytes>) -> Selection {
         Selection::Rejected(Rejection::MethodNotAllowed { allow: Vec::new() })
     }
 
-    async fn call<'r, B: ReqBody, H: ErrorHandler>(
+    fn resume(&self, _: usize, _: &Parts, _: &Bytes) -> Selection {
+        Selection::Rejected(Rejection::MethodNotAllowed { allow: Vec::new() })
+    }
+
+    fn guards_read_body(&self, _: usize) -> bool {
+        false
+    }
+
+    fn answers_after(&self, _: usize, _: &Parts) -> bool {
+        false
+    }
+
+    async fn attempt<'r, B: ReqBody, H: ErrorHandler>(
         &'r self,
         _: usize,
         _: &'r Parts,
         _: PathParams<'r>,
         _: B,
         _: &'r H,
-    ) -> Response {
+    ) -> Attempt<B> {
         unreachable!("an empty set never selects an endpoint")
     }
 }
@@ -117,14 +142,15 @@ impl EndpointSet for () {
 macro_rules! endpoint_set {
     ($future:ident; $($endpoint:ident : $index:tt),+) => {
         impl<$($endpoint: Endpoint),+> EndpointSet for ($($endpoint,)+) {
-            fn select(&self, parts: &Parts, body: Option<&Bytes>) -> Selection {
+            fn select(&self, from: usize, parts: &Parts, body: Option<&Bytes>) -> Selection {
                 let methods = [$(self.$index.method()),+];
                 let head_alias = !methods.contains(&&Method::HEAD);
-                let mut method_seen = false;
+                let mut method_seen = from > 0;
 
                 $(
-                    if let Some(selection) =
-                        consider(&self.$index, $index, parts, body, head_alias, &mut method_seen)
+                    if $index >= from
+                        && let Some(selection) =
+                            consider(&self.$index, $index, parts, body, head_alias, &mut method_seen)
                     {
                         return selection;
                     }
@@ -133,16 +159,46 @@ macro_rules! endpoint_set {
                 rejection(method_seen, &methods, http::StatusCode::BAD_REQUEST)
             }
 
-            fn call<'r, Bd: ReqBody, Eh: ErrorHandler>(
+            fn resume(&self, index: usize, parts: &Parts, body: &Bytes) -> Selection {
+                let passed = match index {
+                    $($index => self.$index.body_guard(parts, body),)+
+                    _ => false,
+                };
+
+                if passed {
+                    return Selection::Selected(index);
+                }
+
+                self.select(index + 1, parts, Some(body))
+            }
+
+            fn guards_read_body(&self, index: usize) -> bool {
+                match index {
+                    $($index => self.$index.guards_read_body(),)+
+                    _ => false,
+                }
+            }
+
+            fn answers_after(&self, index: usize, parts: &Parts) -> bool {
+                let methods = [$(self.$index.method()),+];
+                let head_alias = !methods.contains(&&Method::HEAD);
+
+                methods
+                    .iter()
+                    .skip(index + 1)
+                    .any(|method| method_applies(method, &parts.method, head_alias))
+            }
+
+            fn attempt<'r, Bd: ReqBody, Eh: ErrorHandler>(
                 &'r self,
                 index: usize,
                 parts: &'r Parts,
                 params: PathParams<'r>,
                 body: Bd,
                 handler: &'r Eh,
-            ) -> impl Future<Output = Response> + Send + use<'r, Bd, Eh, $($endpoint),+> {
+            ) -> impl Future<Output = Attempt<Bd>> + Send + use<'r, Bd, Eh, $($endpoint),+> {
                 match index {
-                    $($index => $future::$endpoint { fut: self.$index.call(parts, params, body, handler) },)+
+                    $($index => $future::$endpoint { fut: self.$index.attempt(parts, params, body, handler) },)+
                     _ => unreachable!("index comes from `EndpointSet::select`"),
                 }
             }

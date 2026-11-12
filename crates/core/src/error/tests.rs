@@ -40,3 +40,22 @@ fn into_outcome_plain_response_is_ok() {
 
     assert_eq!(outcome.expect("should be ok").status(), StatusCode::CREATED);
 }
+
+#[test]
+fn into_outcome_status_tuple_overrides_inner_status() {
+    let parts = http::Request::new(()).into_parts().0;
+
+    let response = (StatusCode::CREATED, "made")
+        .into_outcome(&parts)
+        .expect("renders");
+
+    assert_eq!(response.status(), StatusCode::CREATED);
+}
+
+#[test]
+fn into_outcome_status_tuple_keeps_the_inner_error() {
+    let parts = http::Request::new(()).into_parts().0;
+    let failing: Result<&str, HandlerError> = Err(HandlerError::internal("broken"));
+
+    assert!((StatusCode::CREATED, failing).into_outcome(&parts).is_err());
+}

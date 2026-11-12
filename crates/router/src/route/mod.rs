@@ -5,8 +5,10 @@ use fast_http_core::{
 
 use crate::{FnEndpoint, Handler, ParamBuf, Pattern, PatternError, handler};
 
+pub use self::into::{IntoRoute, attributed, same_path};
 pub use self::list::{Append, Level, RouteList};
 
+mod into;
 mod list;
 
 /// A route pattern together with the endpoints that answer it and the flow wrapped around them.
@@ -22,6 +24,18 @@ impl Route<()> {
     pub fn new(pattern: &'static str) -> Result<Self, PatternError> {
         Ok(Self {
             pattern: Pattern::parse(pattern)?,
+            set: (),
+            flow: Identity,
+        })
+    }
+}
+
+impl Route<()> {
+    /// Parses `pattern` under `base`, such as a route of a controller group under the controller's
+    /// path; see [`Pattern::join`].
+    pub fn under(base: &'static str, pattern: &'static str) -> Result<Self, PatternError> {
+        Ok(Self {
+            pattern: Pattern::join(base, pattern)?,
             set: (),
             flow: Identity,
         })
