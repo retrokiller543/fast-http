@@ -160,3 +160,59 @@ async fn close_reports_a_connection_dropped_before_the_reply() {
 
     assert!(result.is_err());
 }
+
+#[tokio::test]
+async fn close_after_the_peer_reset_reports_the_reset() {
+    let (mut server, client) = pair().await;
+
+    drop(client);
+
+    let read = server.recv().await.expect("the reset is reported");
+
+    assert!(read.is_err());
+
+    let result = server.close().await;
+
+    assert!(
+        matches!(
+            result.map_err(Error::into_inner),
+            Err(tungstenite::Error::Protocol(
+                ProtocolError::ResetWithoutClosingHandshake
+            ))
+        ),
+        "a reset connection did not complete a close handshake"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn close_flushes_the_frame_of_a_cancelled_sink_close() {
+    let (server, client) = duplex(16);
+    let mut server = WebSocket::from_io(server, None, WebSocketConfig::default()).await;
+    let mut client = WebSocketStream::from_raw_socket(client, Role::Client, None).await;
+    let pause = Duration::from_millis(50);
+
+    let blocked =
+        tokio::time::timeout(pause, server.send(Message::Binary(vec![0; 64].into()))).await;
+
+    assert!(blocked.is_err(), "the pipe is full, so the send stalls");
+
+    let cancelled = tokio::time::timeout(pause, SinkExt::close(&mut server)).await;
+
+    assert!(cancelled.is_err(), "the pipe is full, so the close stalls");
+
+    let closing = tokio::spawn(server.close());
+    let data = client.next().await.expect("data").expect("ok");
+    let frame = tokio::time::timeout(Duration::from_secs(1), client.next())
+        .await
+        .expect("the queued close frame is flushed")
+        .expect("close frame")
+        .expect("ok");
+
+    assert!(matches!(data, tungstenite::Message::Binary(_)));
+    assert!(matches!(frame, tungstenite::Message::Close(_)));
+    assert!(client.next().await.is_none());
+
+    let result = closing.await.expect("close task does not panic");
+
+    assert!(result.is_ok(), "{result:?}");
+}

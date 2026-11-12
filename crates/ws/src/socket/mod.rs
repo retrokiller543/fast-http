@@ -45,6 +45,7 @@ pub struct WebSocket<S = TokioIo<Upgraded>> {
     inner: WebSocketStream<S>,
     protocol: Option<HeaderValue>,
     permit: Option<Permit>,
+    reset: bool,
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> WebSocket<S> {
@@ -54,6 +55,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> WebSocket<S> {
             inner: WebSocketStream::from_raw_socket(io, Role::Server, Some(config)).await,
             protocol,
             permit: None,
+            reset: false,
         }
     }
 
@@ -107,18 +109,25 @@ impl<S: AsyncRead + AsyncWrite + Unpin> WebSocket<S> {
     /// normally is success; a read error on the way, such as a reset, is returned.
     ///
     /// The deadline covers sending too, which flushes and can stall on a peer that stopped
-    /// reading; when it passes, the socket is dropped, which frees its admission permit. When a
-    /// close is already under way, because the peer closed first, there is nothing to send and
-    /// the reading flushes the reply that is queued.
+    /// reading; when it passes, the socket is dropped, which frees its admission permit.
+    ///
+    /// When a close is already under way there is nothing to send: a frame queued earlier, such
+    /// as by a cancelled [`SinkExt::close`] or the reply to the peer's close, is flushed instead.
+    /// A connection that already ended is success when it ended with a close handshake, and the
+    /// reset it ended with otherwise.
     async fn close_handshake(mut self, frame: Option<CloseFrame>) -> Result<(), Error> {
         let handshake = async {
             match self.inner.send(Message::Close(frame).into_raw()).await {
-                Ok(())
-                | Err(
-                    tungstenite::Error::ConnectionClosed
-                    | tungstenite::Error::AlreadyClosed
-                    | tungstenite::Error::Protocol(ProtocolError::SendAfterClosing),
-                ) => {}
+                Ok(()) | Err(tungstenite::Error::ConnectionClosed) => {}
+                Err(tungstenite::Error::AlreadyClosed) if self.reset => {
+                    return Err(Error(tungstenite::Error::Protocol(
+                        ProtocolError::ResetWithoutClosingHandshake,
+                    )));
+                }
+                Err(tungstenite::Error::AlreadyClosed) => return Ok(()),
+                Err(tungstenite::Error::Protocol(ProtocolError::SendAfterClosing)) => {
+                    self.inner.flush().await.map_err(Error)?;
+                }
                 Err(error) => return Err(Error(error)),
             }
 
@@ -147,7 +156,14 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Stream for WebSocket<S> {
         loop {
             match ready!(self.inner.poll_next_unpin(cx)) {
                 None => return Poll::Ready(None),
-                Some(Err(error)) => return Poll::Ready(Some(Err(Error(error)))),
+                Some(Err(error)) => {
+                    self.reset |= matches!(
+                        error,
+                        tungstenite::Error::Protocol(ProtocolError::ResetWithoutClosingHandshake)
+                    );
+
+                    return Poll::Ready(Some(Err(Error(error))));
+                }
                 Some(Ok(raw)) => {
                     if let Some(message) = Message::from_raw(raw) {
                         return Poll::Ready(Some(Ok(message)));
