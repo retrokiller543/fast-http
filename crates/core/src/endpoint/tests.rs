@@ -1,5 +1,6 @@
 use std::{
     pin::pin,
+    sync::atomic::{AtomicUsize, Ordering},
     task::{Context, Poll, Waker},
 };
 
@@ -16,6 +17,7 @@ struct Fixed {
     head_ok: bool,
     body_needle: Option<&'static [u8]>,
     status: StatusCode,
+    head_calls: AtomicUsize,
 }
 
 impl Fixed {
@@ -26,6 +28,7 @@ impl Fixed {
             head_ok: true,
             body_needle: None,
             status,
+            head_calls: AtomicUsize::new(0),
         }
     }
 }
@@ -40,6 +43,8 @@ impl Endpoint for Fixed {
     }
 
     fn head_guard(&self, _: &Parts) -> bool {
+        self.head_calls.fetch_add(1, Ordering::Relaxed);
+
         self.head_ok
     }
 
@@ -315,4 +320,40 @@ fn dispatch_set_last_missed_body_guard_answers_with_the_configured_status() {
     let response = run_with(&set, Method::POST, b"standard order", options);
 
     assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[test]
+fn dispatch_set_runs_a_body_guarded_endpoints_head_guard_once() {
+    let mut matching = Fixed::new(Method::POST, StatusCode::CREATED);
+
+    matching.phase = GuardPhase::Body;
+    matching.body_needle = Some(b"magic");
+
+    let set = (matching,);
+
+    let response = run(&set, Method::POST, b"a magic body");
+
+    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(set.0.head_calls.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn dispatch_set_runs_a_later_guard_only_when_its_endpoint_is_tried() {
+    let set = (
+        Reading {
+            needle: b"express",
+            status: StatusCode::CREATED,
+        },
+        Fixed::new(Method::POST, StatusCode::OK),
+    );
+
+    let express = run(&set, Method::POST, b"express order");
+
+    assert_eq!(express.status(), StatusCode::CREATED);
+    assert_eq!(set.1.head_calls.load(Ordering::Relaxed), 0);
+
+    let standard = run(&set, Method::POST, b"standard order");
+
+    assert_eq!(standard.status(), StatusCode::OK);
+    assert_eq!(set.1.head_calls.load(Ordering::Relaxed), 1);
 }

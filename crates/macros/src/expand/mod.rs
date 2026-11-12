@@ -14,6 +14,7 @@ use crate::{
     route::RouteAttr,
 };
 
+mod cfg;
 mod dispatcher;
 mod group;
 mod model;
@@ -243,7 +244,7 @@ fn collect(
         name: sig.ident.clone(),
         receiver: matches!(sig.inputs.first(), Some(FnArg::Receiver(_))),
         params,
-        cfgs: cfgs(attrs),
+        gate: cfg::Gate::of(attrs)?,
     });
 
     for route in routes {
@@ -257,15 +258,6 @@ fn collect(
     }
 
     Ok(())
-}
-
-/// The `#[cfg(..)]` attributes among `attrs`.
-fn cfgs(attrs: &[Attribute]) -> Vec<Attribute> {
-    attrs
-        .iter()
-        .filter(|attr| attr.path().is_ident("cfg"))
-        .cloned()
-        .collect()
 }
 
 /// Marks the parameters that guards read with `#[allow(unused_variables)]`, so a parameter that

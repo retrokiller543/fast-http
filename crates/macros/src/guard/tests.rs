@@ -145,3 +145,12 @@ fn analyze_still_finds_bindings_next_to_ranges_and_paths() {
 
     assert_eq!(analyzed.uses, [0, 1, 2]);
 }
+
+#[test]
+fn analyze_ignores_a_name_the_guard_binds_itself() {
+    let params = [param(quote!(mode)), param(quote!(payload))];
+    let expr: Expr = parse_quote!(matches!(mode, Mode::Ready { payload } if payload > 0));
+    let analyzed = analyze(&expr, &params).expect("analyzes");
+
+    assert_eq!(analyzed.uses, [0]);
+}

@@ -15,8 +15,9 @@ use super::either::{
 pub enum Selection {
     /// The endpoint at this index handles the request.
     Selected(usize),
-    /// A body-phase endpoint is next in line, so the body must be buffered and selection repeated.
-    NeedBody,
+    /// The body-phase endpoint at this index passed its head guard, so the body must be buffered
+    /// and selection resumed there with [`EndpointSet::resume`].
+    NeedBody(usize),
     /// No endpoint applies.
     Rejected(Rejection),
 }
@@ -26,8 +27,17 @@ pub trait EndpointSet: Send + Sync + 'static {
     /// Chooses an endpoint from `from` on, using the head, and the body once it is available.
     fn select(&self, from: usize, parts: &Parts, body: Option<&Bytes>) -> Selection;
 
+    /// Continues a selection that stopped at `index` with [`Selection::NeedBody`], now that the
+    /// body is buffered: runs that endpoint's body guard, then selects from the next endpoint on.
+    /// The endpoint's head guard, which already passed, is not run again.
+    fn resume(&self, index: usize, parts: &Parts, body: &Bytes) -> Selection;
+
     /// [`Endpoint::guards_read_body`] of the endpoint at `index`.
     fn guards_read_body(&self, index: usize) -> bool;
+
+    /// Whether an endpoint after `index` answers the request's method. No guard runs, so a guard
+    /// runs only when its endpoint is actually tried.
+    fn answers_after(&self, index: usize, parts: &Parts) -> bool;
 
     /// Offers the request to the endpoint at `index`, which must come from [`EndpointSet::select`].
     fn attempt<'r, B: ReqBody, H: ErrorHandler>(
@@ -64,7 +74,7 @@ fn consider<E: Endpoint>(
 
     match (endpoint.phase(), body) {
         (GuardPhase::Head, _) => Some(Selection::Selected(index)),
-        (GuardPhase::Body, None) => Some(Selection::NeedBody),
+        (GuardPhase::Body, None) => Some(Selection::NeedBody(index)),
         (GuardPhase::Body, Some(body)) => endpoint
             .body_guard(parts, body)
             .then_some(Selection::Selected(index)),
@@ -105,7 +115,15 @@ impl EndpointSet for () {
         Selection::Rejected(Rejection::MethodNotAllowed { allow: Vec::new() })
     }
 
+    fn resume(&self, _: usize, _: &Parts, _: &Bytes) -> Selection {
+        Selection::Rejected(Rejection::MethodNotAllowed { allow: Vec::new() })
+    }
+
     fn guards_read_body(&self, _: usize) -> bool {
+        false
+    }
+
+    fn answers_after(&self, _: usize, _: &Parts) -> bool {
         false
     }
 
@@ -141,11 +159,34 @@ macro_rules! endpoint_set {
                 rejection(method_seen, &methods, http::StatusCode::BAD_REQUEST)
             }
 
+            fn resume(&self, index: usize, parts: &Parts, body: &Bytes) -> Selection {
+                let passed = match index {
+                    $($index => self.$index.body_guard(parts, body),)+
+                    _ => false,
+                };
+
+                if passed {
+                    return Selection::Selected(index);
+                }
+
+                self.select(index + 1, parts, Some(body))
+            }
+
             fn guards_read_body(&self, index: usize) -> bool {
                 match index {
                     $($index => self.$index.guards_read_body(),)+
                     _ => false,
                 }
+            }
+
+            fn answers_after(&self, index: usize, parts: &Parts) -> bool {
+                let methods = [$(self.$index.method()),+];
+                let head_alias = !methods.contains(&&Method::HEAD);
+
+                methods
+                    .iter()
+                    .skip(index + 1)
+                    .any(|method| method_applies(method, &parts.method, head_alias))
             }
 
             fn attempt<'r, Bd: ReqBody, Eh: ErrorHandler>(

@@ -1,9 +1,10 @@
 use proc_macro2::TokenStream;
-use quote::{ToTokens, format_ident, quote};
-use syn::{Attribute, Error, Ident, Type};
+use quote::{format_ident, quote};
+use syn::{Error, Ident, Type};
 
 use self::{slots::SlotTable, steps::variant_block};
 use super::{
+    cfg::Gate,
     model::{Context, Handler},
     partition::Partition,
 };
@@ -40,8 +41,8 @@ pub struct Dispatcher {
     pub items: TokenStream,
     /// The expression that constructs the endpoint inside `routes`.
     pub expr: TokenStream,
-    /// The `#[cfg(..)]` attributes of its handlers, which gate it and its registration.
-    pub cfgs: Vec<Attribute>,
+    /// The gate of its handlers, which gates it and its registration.
+    pub gate: Gate,
 }
 
 /// Generates one endpoint that picks among `partition`'s variants.
@@ -124,18 +125,19 @@ pub fn dispatcher(
         None => (quote!(;), TokenStream::new(), quote!(#name)),
     };
     let hidden = derived.then(|| quote!(#[doc(hidden)]));
-    let cfgs = shared_cfgs(handlers, partition)?;
+    let gate = shared_gate(handlers, partition)?;
+    let cfg = gate.attr();
+    let early_rule = early_rule.map(|rule| quote!(#cfg #rule));
     let guards_read_body = guards_read_body(&rt, handlers, partition)?;
     let items = quote! {
-        #(#cfgs)*
         #early_rule
 
-        #(#cfgs)*
+        #cfg
         #hidden
         #[allow(non_camel_case_types)]
         #vis struct #name #impl_generics #where_clause #fields
 
-        #(#cfgs)*
+        #cfg
         impl #impl_generics #core::Endpoint for #name #type_generics #where_clause {
             fn method(&self) -> &#core::http::Method {
                 &#core::http::Method::#method
@@ -202,31 +204,24 @@ pub fn dispatcher(
     Ok(Dispatcher {
         items,
         expr: construct,
-        cfgs,
+        gate,
     })
 }
 
-/// The `#[cfg(..)]` attributes of the handlers in `partition`, which must all be the same, since
-/// one endpoint calls every one of them.
-fn shared_cfgs(handlers: &[Handler], partition: &Partition) -> syn::Result<Vec<Attribute>> {
+/// The gate of the handlers in `partition`, which must all be the same, since one endpoint
+/// calls every one of them.
+fn shared_gate(handlers: &[Handler], partition: &Partition) -> syn::Result<Gate> {
     let mut variants = partition
         .variants
         .iter()
         .map(|variant| &handlers[variant.handler]);
     let Some(first) = variants.next() else {
-        return Ok(Vec::new());
+        return Ok(Gate::default());
     };
-    let key = |handler: &Handler| {
-        handler
-            .cfgs
-            .iter()
-            .map(|cfg| cfg.to_token_stream().to_string())
-            .collect::<Vec<_>>()
-    };
-    let expected = key(first);
+    let expected = first.gate.key();
 
     for handler in variants {
-        if key(handler) != expected {
+        if handler.gate.key() != expected {
             return Err(Error::new_spanned(
                 &handler.name,
                 format!(
@@ -237,7 +232,7 @@ fn shared_cfgs(handlers: &[Handler], partition: &Partition) -> syn::Result<Vec<A
         }
     }
 
-    Ok(first.cfgs.clone())
+    Ok(first.gate.clone())
 }
 
 /// `Endpoint::guards_read_body`, when a guard of some variant uses that variant's last argument,

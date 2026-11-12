@@ -1,8 +1,9 @@
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{Attribute, Ident};
+use syn::Ident;
 
 use super::{
+    cfg,
     dispatcher::{self, Naming},
     group,
     model::{Context, Handler},
@@ -52,18 +53,18 @@ pub fn generate(
                 partition,
                 Naming::derived(generated.extra.len()),
             )?;
-            let cfgs = &dispatcher.cfgs;
+            let cfg = dispatcher.gate.attr();
             let expr = &dispatcher.expr;
 
             endpoints.push(quote! {
-                #(#cfgs)*
+                #cfg
                 let __route = __route.endpoint(#expr);
             });
-            gates.push(dispatcher.cfgs.clone());
+            gates.push(dispatcher.gate.clone());
             generated.extra.push(dispatcher.items);
         }
 
-        let gate = route_gate(&gates)?;
+        let gate = cfg::any_of(&gates);
 
         generated.routes.push(quote! {
             #gate
@@ -78,27 +79,6 @@ pub fn generate(
     }
 
     Ok(generated)
-}
-
-/// The `#[cfg(..)]` of a whole route: present only when every endpoint is gated, so a route whose
-/// endpoints are all compiled out is not registered empty.
-fn route_gate(gates: &[Vec<Attribute>]) -> syn::Result<Option<TokenStream>> {
-    if gates.is_empty() || gates.iter().any(Vec::is_empty) {
-        return Ok(None);
-    }
-
-    let mut alternatives = Vec::new();
-
-    for cfgs in gates {
-        let predicates = cfgs
-            .iter()
-            .map(Attribute::parse_args::<TokenStream>)
-            .collect::<syn::Result<Vec<_>>>()?;
-
-        alternatives.push(quote!(all(#(#predicates),*)));
-    }
-
-    Ok(Some(quote!(#[cfg(any(#(#alternatives),*))])))
 }
 
 /// The function that builds the router from the `routes` statements: `routes`, or a group's

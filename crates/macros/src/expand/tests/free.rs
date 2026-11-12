@@ -222,5 +222,10 @@ fn standalone_cfg_gates_every_generated_item() {
         },
     );
 
-    assert_eq!(out.matches("#[cfg(feature=\"admin\")]").count(), 6, "{out}");
+    assert_eq!(out.matches("#[cfg(feature=\"admin\")]").count(), 1, "{out}");
+    assert_eq!(
+        out.matches("#[cfg(all(feature=\"admin\"))]").count(),
+        4,
+        "{out}"
+    );
 }

@@ -1,8 +1,10 @@
-use proc_macro2::{Spacing, TokenStream, TokenTree};
-use quote::ToTokens;
 use syn::{Error, Expr, Ident, Pat};
 
+use self::free::free_names;
+
 use crate::expand::Param;
+
+mod free;
 
 /// A view of the request head that a guard may name without the method taking it as a parameter.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -28,7 +30,8 @@ pub struct Analyzed<'a> {
     pub reserved: Vec<Reserved>,
 }
 
-/// Finds which parameters `expr` reads, by looking for the names their patterns bind.
+/// Finds which parameters `expr` reads: the names their patterns bind that the expression uses
+/// without binding them itself, as [`free_names`] finds them.
 ///
 /// `headers` and `query` are reserved: when the expression names one and no parameter binds it,
 /// the guard gets the view of the request head. A parameter of that name takes precedence.
@@ -36,12 +39,9 @@ pub struct Analyzed<'a> {
 /// `self` is rejected: a guard runs before the controller is consulted and can only see what the
 /// method takes as parameters.
 pub fn analyze<'a>(expr: &'a Expr, params: &[Param]) -> syn::Result<Analyzed<'a>> {
-    let tokens = expr.to_token_stream();
+    let free = free_names(expr);
 
-    if mentions(
-        tokens.clone(),
-        &[Ident::new("self", proc_macro2::Span::call_site())],
-    ) {
+    if free.iter().any(|name| name == "self") {
         return Err(Error::new_spanned(
             expr,
             "a guard cannot use `self`; take what it needs as a parameter of the method",
@@ -51,17 +51,17 @@ pub fn analyze<'a>(expr: &'a Expr, params: &[Param]) -> syn::Result<Analyzed<'a>
     let uses = params
         .iter()
         .enumerate()
-        .filter(|(_, param)| mentions(tokens.clone(), &param.bindings))
+        .filter(|(_, param)| param.bindings.iter().any(|binding| free.contains(binding)))
         .map(|(index, _)| index)
         .collect();
 
     let reserved = Reserved::ALL
         .into_iter()
         .filter(|(_, name)| {
-            let ident = Ident::new(name, proc_macro2::Span::call_site());
-
-            mentions(tokens.clone(), std::slice::from_ref(&ident))
-                && !params.iter().any(|param| param.bindings.contains(&ident))
+            free.iter().any(|found| found == name)
+                && !params
+                    .iter()
+                    .any(|param| param.bindings.iter().any(|binding| binding == name))
         })
         .map(|(reserved, _)| reserved)
         .collect();
@@ -108,53 +108,6 @@ fn collect(pat: &Pat, found: &mut Vec<Ident>) {
             .for_each(|case| collect(case, found)),
         _ => {}
     }
-}
-
-/// Whether `tokens` use one of `names` as a binding.
-///
-/// The tokens are scanned rather than parsed, because guards are often macro calls such as
-/// `matches!(..)` whose arguments are not expressions. A name right after `.` or `::` is a field,
-/// method or path segment, as in `headers.contains_key(..)`, and a name right before a lone `:`
-/// is a field, as in `Job::Fast { id: 0, .. }`; neither refers to a binding.
-fn mentions(tokens: TokenStream, names: &[Ident]) -> bool {
-    let tokens: Vec<_> = tokens.into_iter().collect();
-
-    tokens.iter().enumerate().any(|(index, token)| match token {
-        TokenTree::Ident(ident) => {
-            names.contains(ident)
-                && !is_member(&tokens[..index])
-                && !is_field_name(tokens.get(index + 1))
-        }
-        TokenTree::Group(group) => mentions(group.stream(), names),
-        _ => false,
-    })
-}
-
-/// Whether the tokens before a name make it a member or path segment: they end in a `.` that is
-/// not part of `..`, or in `::`.
-fn is_member(before: &[TokenTree]) -> bool {
-    let punct = |token: Option<&TokenTree>, ch: char| matches!(token, Some(TokenTree::Punct(punct)) if punct.as_char() == ch);
-    let joint = |token: Option<&TokenTree>, ch: char| {
-        matches!(
-            token,
-            Some(TokenTree::Punct(punct)) if punct.as_char() == ch && punct.spacing() == Spacing::Joint
-        )
-    };
-    let last = before.last();
-    let previous = before
-        .len()
-        .checked_sub(2)
-        .and_then(|index| before.get(index));
-
-    (punct(last, '.') && !joint(previous, '.')) || (punct(last, ':') && joint(previous, ':'))
-}
-
-/// Whether the token after a name makes it a field name: a `:` that does not start `::`.
-fn is_field_name(next: Option<&TokenTree>) -> bool {
-    matches!(
-        next,
-        Some(TokenTree::Punct(punct)) if punct.as_char() == ':' && punct.spacing() == Spacing::Alone
-    )
 }
 
 #[cfg(test)]

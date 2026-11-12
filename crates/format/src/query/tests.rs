@@ -93,5 +93,13 @@ fn query_rejects_a_plain_str_field_that_needs_decoding() {
 
     let error = extract::<Strict>(&request).expect_err("cannot borrow decoded text");
 
+    let FormatError::Decode(source) = &error else {
+        panic!("a decode error, got {error:?}");
+    };
+    let borrowed = source
+        .downcast_ref::<BorrowedQueryField>()
+        .expect("the borrowing hint is a typed error");
+
     assert!(error.to_string().contains("Cow"));
+    assert!(std::error::Error::source(borrowed).is_some());
 }

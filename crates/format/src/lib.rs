@@ -40,5 +40,5 @@ pub use format::{Decode, Encode, Format};
 pub use formats::*;
 pub use negotiated::Negotiated;
 #[cfg(feature = "form")]
-pub use query::Query;
+pub use query::{BorrowedQueryField, Query};
 pub use set::{Cons, DecodeSet, Enabled, EncodeSet, FormatSet, Nil};

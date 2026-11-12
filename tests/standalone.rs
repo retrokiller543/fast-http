@@ -76,6 +76,12 @@ mod gated {
         "removed"
     }
 
+    #[cfg_attr(test, cfg(any()))]
+    #[get("/conditional")]
+    async fn conditional() -> &'static str {
+        "conditional"
+    }
+
     #[cfg(test)]
     #[get("/kept")]
     async fn kept() -> &'static str {
@@ -415,7 +421,10 @@ async fn routes_module_leaves_out_handlers_whose_cfg_is_off() {
     let kept = send(&router, Method::GET, "/gated/kept", &[], "").await;
     let removed = send(&router, Method::DELETE, "/gated/kept", &[], "").await;
 
+    let conditional = send(&router, Method::GET, "/gated/conditional", &[], "").await;
+
     assert_eq!(gone.0, StatusCode::NOT_FOUND);
+    assert_eq!(conditional.0, StatusCode::NOT_FOUND);
     assert_eq!(kept.1, "kept");
     assert_eq!(removed.0, StatusCode::METHOD_NOT_ALLOWED);
 }

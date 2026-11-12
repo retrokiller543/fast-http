@@ -254,9 +254,9 @@ fn expand_handler_cfg_gates_its_endpoint_and_route() {
             }
         },
     );
-    let gate = "#[cfg(feature=\"admin\")]";
+    let gate = "#[cfg(all(feature=\"admin\"))]";
 
-    assert_eq!(out.matches(gate).count(), 5, "{out}");
+    assert_eq!(out.matches(gate).count(), 3, "{out}");
     assert!(out.contains("#[cfg(any(all(feature=\"admin\")))]let__router="));
     assert!(out.contains(&format!("{gate}let__route=__route.endpoint(")));
 }
@@ -278,7 +278,7 @@ fn expand_ungated_handler_on_a_route_keeps_the_route_ungated() {
     );
 
     assert!(!out.contains("cfg(any("));
-    assert!(out.contains("#[cfg(feature=\"admin\")]let__route=__route.endpoint("));
+    assert!(out.contains("#[cfg(all(feature=\"admin\"))]let__route=__route.endpoint("));
 }
 
 #[test]
@@ -312,4 +312,25 @@ fn expand_guard_on_the_head_does_not_claim_to_read_the_body() {
     );
 
     assert!(!out.contains("guards_read_body"));
+}
+
+#[test]
+fn expand_cfg_attr_that_applies_a_cfg_gates_like_a_cfg() {
+    let out = expand(
+        quote!(),
+        quote! {
+            impl Api {
+                #[cfg_attr(not(feature = "foo"), cfg(any()))]
+                #[get("/foo")]
+                async fn foo(&self) -> String { String::new() }
+            }
+        },
+    );
+
+    assert!(
+        out.contains(
+            "#[cfg(all(any(not(not(feature=\"foo\")),all(any()))))]let__route=__route.endpoint("
+        ),
+        "{out}"
+    );
 }

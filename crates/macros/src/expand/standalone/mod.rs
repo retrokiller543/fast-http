@@ -3,7 +3,9 @@ use quote::{format_ident, quote};
 use syn::{Error, ItemFn, Visibility};
 
 use super::{
-    allow_guard_only_params, cfgs, check_signature,
+    allow_guard_only_params,
+    cfg::Gate,
+    check_signature,
     dispatcher::{self, Naming},
     model::{Context, Handler, Variant},
     params,
@@ -43,12 +45,13 @@ pub fn standalone(
 
     let vis = std::mem::replace(&mut function.vis, Visibility::Inherited);
     let pattern = join(None, &route.path)?;
-    let cfgs = cfgs(&function.attrs);
+    let gate = Gate::of(&function.attrs)?;
+    let cfg = gate.attr();
     let handlers = vec![Handler {
         name: inner,
         receiver: false,
         params,
-        cfgs: cfgs.clone(),
+        gate,
     }];
     let variants = vec![Variant {
         handler: 0,
@@ -84,13 +87,13 @@ pub fn standalone(
 
         #(#errors)*
 
-        #(#cfgs)*
+        #cfg
         impl #name {
             /// The path of this function's route attribute.
             #vis const PATH: &'static str = #pattern;
         }
 
-        #(#cfgs)*
+        #cfg
         impl #krate::router::IntoRoute for #name {
             type Set = (#name,);
             type Flow = #krate::core::Identity;

@@ -47,8 +47,8 @@ pub trait Endpoint: Send + Sync + 'static {
     /// Whether a guard of [`Endpoint::attempt`] reads the body itself, so that turning the
     /// request down consumes it and yields [`Attempt::Missed`].
     ///
-    /// When it does and a later endpoint could take the request, the dispatcher buffers the body
-    /// first and replays it to that endpoint.
+    /// When it does and a later endpoint answers the same method, the dispatcher buffers the body
+    /// first and replays it to that endpoint if this one misses.
     fn guards_read_body(&self) -> bool {
         false
     }

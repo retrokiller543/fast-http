@@ -30,8 +30,8 @@ impl Default for DispatchOptions {
 ///
 /// The body streams to the endpoint that takes the request. It is buffered, once, only when an
 /// endpoint needs the bytes for a guard, or when an endpoint whose guards read the body could miss
-/// while a later endpoint might still take the request; from then on every endpoint tried gets
-/// its own replay of the bytes.
+/// while a later endpoint answers the same method; from then on every endpoint tried gets its own
+/// replay of the bytes. Each endpoint's guards run at most once per request.
 pub async fn dispatch_set<S, B, H>(
     set: &S,
     parts: &Parts,
@@ -45,7 +45,7 @@ where
     B: ReqBody,
     H: ErrorHandler,
 {
-    let (from, body) = match stream(set, parts, params, body, handler, options).await {
+    let (pending, body) = match stream(set, parts, params, body, handler, options).await {
         Ok(response) => return response,
         Err(pending) => pending,
     };
@@ -53,11 +53,24 @@ where
         Ok(bytes) => bytes,
         Err(rejection) => return handler.handle(HandlerError::new(rejection), parts).await,
     };
+    let selection = match pending {
+        Pending::Attempt(index) => Selection::Selected(index),
+        Pending::BodyGuard(index) => set.resume(index, parts, &bytes),
+    };
 
-    replay(set, from, parts, params, &bytes, handler, options).await
+    replay(set, selection, parts, params, &bytes, handler, options).await
 }
 
-/// Tries endpoints on the streaming body; `Err` hands back where to resume once it is buffered.
+/// Where selection stands when the streaming phase hands over to the buffered one.
+enum Pending {
+    /// The endpoint at this index passed its guards so far and is attempted with the bytes.
+    Attempt(usize),
+    /// The endpoint at this index passed its head guard and its body guard runs on the bytes.
+    BodyGuard(usize),
+}
+
+/// Tries endpoints on the streaming body; `Err` hands back where selection stands once it is
+/// buffered.
 async fn stream<S: EndpointSet, B: ReqBody, H: ErrorHandler>(
     set: &S,
     parts: &Parts,
@@ -65,20 +78,20 @@ async fn stream<S: EndpointSet, B: ReqBody, H: ErrorHandler>(
     mut body: B,
     handler: &H,
     options: DispatchOptions,
-) -> Result<Response, (usize, B)> {
+) -> Result<Response, (Pending, B)> {
     let mut from = 0;
 
     loop {
         let index = match set.select(from, parts, None) {
             Selection::Selected(index) => index,
-            Selection::NeedBody => return Err((from, body)),
+            Selection::NeedBody(index) => return Err((Pending::BodyGuard(index), body)),
             Selection::Rejected(rejection) => {
                 return Ok(reject(rejection, parts, handler, options).await);
             }
         };
 
-        if set.guards_read_body(index) && later_applies(set, index, parts) {
-            return Err((index, body));
+        if set.guards_read_body(index) && set.answers_after(index, parts) {
+            return Err((Pending::Attempt(index), body));
         }
 
         match set.attempt(index, parts, params, body, handler).await {
@@ -92,10 +105,10 @@ async fn stream<S: EndpointSet, B: ReqBody, H: ErrorHandler>(
     }
 }
 
-/// Tries endpoints from `from` on, giving each a fresh replay of the buffered body.
+/// Tries endpoints starting with `selection`, giving each a fresh replay of the buffered body.
 async fn replay<S: EndpointSet, H: ErrorHandler>(
     set: &S,
-    mut from: usize,
+    mut selection: Selection,
     parts: &Parts,
     params: PathParams<'_>,
     bytes: &Bytes,
@@ -103,12 +116,12 @@ async fn replay<S: EndpointSet, H: ErrorHandler>(
     options: DispatchOptions,
 ) -> Response {
     loop {
-        let index = match set.select(from, parts, Some(bytes)) {
+        let index = match selection {
             Selection::Selected(index) => index,
             Selection::Rejected(rejection) => {
                 return reject(rejection, parts, handler, options).await;
             }
-            Selection::NeedBody => {
+            Selection::NeedBody(_) => {
                 let error = HandlerError::internal("endpoint asked for the body twice");
 
                 return handler.handle(error, parts).await;
@@ -118,14 +131,11 @@ async fn replay<S: EndpointSet, H: ErrorHandler>(
 
         match set.attempt(index, parts, params, body, handler).await {
             Attempt::Done(response) => return response,
-            Attempt::Declined(_) | Attempt::Missed => from = index + 1,
+            Attempt::Declined(_) | Attempt::Missed => {
+                selection = set.select(index + 1, parts, Some(bytes));
+            }
         }
     }
-}
-
-/// Whether an endpoint after `index` could still take the request, judged by the head alone.
-fn later_applies<S: EndpointSet>(set: &S, index: usize, parts: &Parts) -> bool {
-    !matches!(set.select(index + 1, parts, None), Selection::Rejected(_))
 }
 
 async fn reject<H: ErrorHandler>(
